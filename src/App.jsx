@@ -32,12 +32,14 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { 
-  apiKey: "AIzaSyCAoiDnT3sSeGdKpt-jKBEoQmhLt4JKizg",
-  authDomain: "voltas-vadodara.firebaseapp.com",
-  projectId: "voltas-vadodara",
-  storageBucket: "voltas-vadodara.firebasestorage.app",
-  messagingSenderId: "891841914552",
-  appId: "1:891841914552:web:31a4c6e0c49ac6fddff64d"
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  onSnapshot,
+  deleteDoc,
+  updateDoc,
 } from "firebase/firestore";
 
 // --- Firebase Config & Init ---
