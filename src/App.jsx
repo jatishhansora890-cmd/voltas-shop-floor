@@ -46,12 +46,12 @@ import {
 // --- Firebase Config & Init ---
 // !!! REPLACE THESE VALUES WITH YOUR REAL KEYS FROM FIREBASE CONSOLE !!!
 const firebaseConfig = {
-  apiKey: "AIzaSy...",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "123...",
-  appId: "1:123..."
+  apiKey: "AIzaSyCAoiDnT3sSeGdKpt-jKBEoQmhLt4JKizg",
+  authDomain: "voltas-vadodara.firebaseapp.com",
+  projectId: "voltas-vadodara",
+  storageBucket: "voltas-vadodara.firebasestorage.app",
+  messagingSenderId: "891841914552",
+  appId: "1:891841914552:web:31a4c6e0c49ac6fddff64d"
 };
 
 // Initialize Firebase
