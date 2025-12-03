@@ -27,7 +27,8 @@ import {
   WifiOff,
   History,
   LayoutGrid,
-  Factory
+  Factory,
+  Database
 } from 'lucide-react';
 
 // --- Firebase Imports ---
@@ -211,12 +212,16 @@ export default function App() {
         snapshot.docs.forEach(doc => {
             const d = doc.data();
             if (doc.id === 'masterData') {
-                setMasterData(prev => ({
-                    ...INITIAL_MASTER_DATA, 
-                    ...d.data,
-                    // Ensure CRF_DATA exists and is an object
-                    CRF_DATA: d.data.CRF_DATA && !Array.isArray(d.data.CRF_DATA) ? d.data.CRF_DATA : INITIAL_MASTER_DATA.CRF_DATA
-                }));
+                const fetched = d.data || {};
+                // SAFETY MERGE: If fetched data lacks CRF_DATA or it's not an object (old array format), force default
+                const safeData = {
+                    ...INITIAL_MASTER_DATA,
+                    ...fetched,
+                    CRF_DATA: (fetched.CRF_DATA && !Array.isArray(fetched.CRF_DATA)) ? fetched.CRF_DATA : INITIAL_MASTER_DATA.CRF_DATA,
+                    CF_LINE: fetched.CF_LINE || INITIAL_MASTER_DATA.CF_LINE,
+                    WD_LINE: fetched.WD_LINE || INITIAL_MASTER_DATA.WD_LINE
+                };
+                setMasterData(safeData);
             }
             if (doc.id === 'activeModels') setActiveModels(d.data || {});
             if (doc.id === 'monthlyPlans') setMonthlyPlans(d.data || {});
@@ -259,31 +264,27 @@ export default function App() {
       await updateSettingsDoc('activeModels', newStatus);
   };
 
-  // --- Settings Logic (Updated for CRF Hierarchy) ---
+  // --- Settings Logic (Safe) ---
   
-  // Add Category (Assembly) OR Machine (CRF)
   const handleSettingsAddCategory = async () => {
     if (!newCategoryInput) return;
     
     let newMasterData = { ...masterData };
     
     if (settingsGroup === 'CRF_DATA') {
-        // Add new Machine
-        if (newMasterData.CRF_DATA[newCategoryInput]) { showNotification("Machine already exists"); return; }
-        newMasterData.CRF_DATA[newCategoryInput] = [];
+        if (newMasterData.CRF_DATA?.[newCategoryInput]) { showNotification("Machine already exists"); return; }
+        newMasterData.CRF_DATA = { ...newMasterData.CRF_DATA, [newCategoryInput]: [] };
     } else if (settingsGroup === 'CF_LINE') {
-        // Add new Category
-        if (newMasterData.CF_LINE[newCategoryInput]) { showNotification("Category already exists"); return; }
-        newMasterData.CF_LINE[newCategoryInput] = [];
+        if (newMasterData.CF_LINE?.[newCategoryInput]) { showNotification("Category already exists"); return; }
+        newMasterData.CF_LINE = { ...newMasterData.CF_LINE, [newCategoryInput]: [] };
     }
     
     setMasterData(newMasterData); 
     setNewCategoryInput(''); 
     await updateSettingsDoc('masterData', newMasterData); 
-    showNotification("Added Successfully");
+    showNotification("Group/Machine Created");
   };
 
-  // Add Part (CRF) or Model (Assembly)
   const handleSettingsAddItem = async () => {
     if (!newItemName) return;
     let newMasterData = { ...masterData };
@@ -291,13 +292,15 @@ export default function App() {
 
     if (settingsGroup === 'CRF_DATA') {
         if(!targetCategoryForModel) { showNotification("Select Machine First"); return; }
-        // Add Part to specific Machine
-        newMasterData.CRF_DATA[targetCategoryForModel] = [...(newMasterData.CRF_DATA[targetCategoryForModel] || []), newItemName];
+        const currentParts = newMasterData.CRF_DATA[targetCategoryForModel] || [];
+        newMasterData.CRF_DATA[targetCategoryForModel] = [...currentParts, newItemName];
     } else if (settingsGroup === 'CF_LINE') {
         if(!targetCategoryForModel) { showNotification("Select Category First"); return; }
-        newMasterData.CF_LINE[targetCategoryForModel] = [...(newMasterData.CF_LINE[targetCategoryForModel] || []), newItemName];
+        const currentModels = newMasterData.CF_LINE[targetCategoryForModel] || [];
+        newMasterData.CF_LINE[targetCategoryForModel] = [...currentModels, newItemName];
     } else if (settingsGroup === 'WD_LINE') {
-        newMasterData.WD_LINE["Standard"] = [...(newMasterData.WD_LINE["Standard"] || []), newItemName];
+        const currentWD = newMasterData.WD_LINE["Standard"] || [];
+        newMasterData.WD_LINE["Standard"] = [...currentWD, newItemName];
     }
     
     setMasterData(newMasterData); 
@@ -345,6 +348,13 @@ export default function App() {
     showNotification("Deleted");
   };
 
+  const handleHardReset = async () => {
+      if(!confirm("Warning: This will reset configuration to defaults (but keep production entries). Continue?")) return;
+      setMasterData(INITIAL_MASTER_DATA);
+      await updateSettingsDoc('masterData', INITIAL_MASTER_DATA);
+      window.location.reload();
+  };
+
   // --- Production Logic ---
   const handleAddBatchItem = () => {
     const isCRF = activeTab === 'CRF';
@@ -358,17 +368,16 @@ export default function App() {
     let newItem = { 
         id: Date.now(), 
         qty: parseInt(currentQty),
-        machine: isCRF ? selectedCategory : null, // Machine Name
-        part: isCRF ? selectedSubCategory : null, // Part Name
-        model: selectedModel, // Target Model (e.g., 200L)
+        machine: isCRF ? selectedCategory : null, 
+        part: isCRF ? selectedSubCategory : null, 
+        model: selectedModel, 
         category: !isCRF ? (isWD ? "Standard" : selectedCategory) : null 
     };
     setCurrentBatch([...currentBatch, newItem]);
     
-    // Reset fields appropriately
     if(isCRF) { 
-        setSelectedSubCategory(''); // Clear Part
-        setSelectedModel(''); // Clear Model
+        setSelectedSubCategory(''); 
+        setSelectedModel(''); 
     } else { 
         setSelectedModel(''); 
     }
@@ -486,9 +495,14 @@ export default function App() {
         
         let relevantModels = [];
         if (masterData[relevantDataKey]) {
-            // Flatten values to get all models
-            const allModels = Object.values(masterData[relevantDataKey]).flat();
-            relevantModels = [...new Set(allModels)]; 
+            // SAFE ACCESS: Check if object exists before accessing values
+            if (relevantDataKey === 'CRF') {
+                 // Should not happen here as CRF has separate block, but safe fallback
+                 relevantModels = [];
+            } else if (masterData[relevantDataKey]) {
+                 const allModels = Object.values(masterData[relevantDataKey]).flat();
+                 relevantModels = [...new Set(allModels)]; 
+            }
         }
         
         relevantModels.forEach(model => {
@@ -564,18 +578,19 @@ export default function App() {
     // --- DROPDOWN LOGIC FIXED ---
     const primaryOptions = isCRF 
         ? Object.keys(masterData.CRF_DATA || {}) 
-        : (isWD ? [] : Object.keys(masterData.CF_LINE));
+        : (isWD ? [] : Object.keys(masterData.CF_LINE || {}));
     
-    const secondaryOptions = isCRF && selectedCategory
+    const secondaryOptions = isCRF && selectedCategory && masterData.CRF_DATA
         ? (masterData.CRF_DATA[selectedCategory] || [])
         : [];
 
     let modelOptions = [];
     if (isCRF) {
-        modelOptions = Object.values(masterData.CF_LINE).flat();
+        // Flatten all CF models for CRF target selection
+        modelOptions = masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat() : [];
     } else if (isWD) {
-        modelOptions = masterData.WD_LINE["Standard"];
-    } else if (selectedCategory) {
+        modelOptions = masterData.WD_LINE?.["Standard"] || [];
+    } else if (selectedCategory && masterData.CF_LINE) {
         modelOptions = masterData.CF_LINE[selectedCategory] || [];
     }
     
@@ -728,7 +743,6 @@ export default function App() {
              {(settingsGroup === 'CF_LINE' || settingsGroup === 'CRF_DATA') && (
                  <select value={targetCategoryForModel} onChange={(e) => setTargetCategoryForModel(e.target.value)} className="w-full p-2 border rounded text-sm bg-white">
                     <option value="">Select {settingsGroup === 'CRF_DATA' ? 'Machine' : 'Category'}...</option>
-                    {/* For CRF, keys are machines. For CF, keys are categories */}
                     {Object.keys(settingsGroup === 'CRF_DATA' ? masterData.CRF_DATA : masterData.CF_LINE).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                  </select>
              )}
@@ -787,14 +801,18 @@ export default function App() {
                             <span className={activeModels[m] === false ? 'text-gray-400 line-through' : ''}>{m}</span> 
                             <div className="flex gap-3">
                                 <button onClick={() => toggleModelStatus(m)} className={activeModels[m] !== false ? 'text-green-600' : 'text-gray-300'}>
-                                   {activeModels[m] !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
-                                </button>
+                                   {activeModels[m] !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}</button>
                                 <button onClick={() => handleSettingsDeleteItem('CF_LINE', m, cat)} className="text-red-400"><Trash2 size={14}/></button>
                             </div>
                         </div>
                      ))}
                  </div>
              ))}
+          </div>
+          
+          {/* HARD RESET (For recovering from crashes) */}
+          <div className="mt-8 text-center pt-8 border-t border-gray-100">
+              <button onClick={() => { if(confirm("Reset all settings to default?")) { setMasterData(INITIAL_MASTER_DATA); updateSettingsDoc('masterData', INITIAL_MASTER_DATA); window.location.reload(); } }} className="text-gray-400 text-xs hover:text-red-500 flex items-center justify-center gap-1 mx-auto"><Database size={12}/> Reset App Config</button>
           </div>
       </Card>
     </div>
