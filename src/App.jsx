@@ -25,12 +25,13 @@ import {
   RefreshCw,
   Wifi,
   WifiOff,
-  History
+  History,
+  LayoutGrid
 } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "firebase/auth";
 import { 
   getFirestore, 
   collection, 
@@ -53,8 +54,8 @@ const firebaseConfig = {
   appId: "1:123..."
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Fallback to avoid crash if keys are missing
+const app = initializeApp(firebaseConfig.apiKey !== "AIzaSy..." ? firebaseConfig : {});
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'voltas-prod-live';
@@ -77,8 +78,13 @@ const PROCESS_FLOW = {
 
 // Default Initial Data
 const INITIAL_MASTER_DATA = {
-  CRF_MACHINES: ["Komatsu Press", "Thermoforming", "Extrusion", "Paint Shop"],
-  CRF_PARTS: ["Side Panel", "Back Panel", "Bottom Plate", "Inner Liner", "Door Liner", "Profile"],
+  // CHANGED: CRF is now nested like CF_LINE (Machine -> Parts)
+  CRF_DATA: {
+    "Komatsu Press": ["Side Panel", "Back Panel", "Bottom Plate"],
+    "Thermoforming": ["Inner Liner", "Door Liner"],
+    "Extrusion": ["Profile A", "Profile B"],
+    "Paint Shop": ["Painted Sheet"]
+  },
   CF_LINE: {
     "Hard Top": ["100L", "200L", "300L", "400L", "500L"],
     "Glass Top": ["200L", "300L", "400L", "500L"]
@@ -89,7 +95,7 @@ const INITIAL_MASTER_DATA = {
 };
 
 const getDataKeyForArea = (area) => {
-  if (area === "CRF") return "CRF"; 
+  if (area === "CRF") return "CRF"; // Maps to CRF_DATA
   if (area === "WD final") return "WD_LINE";
   return "CF_LINE";
 };
@@ -200,7 +206,15 @@ export default function App() {
     const unsubSettings = onSnapshot(settingsRef, (snapshot) => {
         snapshot.docs.forEach(doc => {
             const d = doc.data();
-            if (doc.id === 'masterData') setMasterData(prev => ({...INITIAL_MASTER_DATA, ...d.data}));
+            if (doc.id === 'masterData') {
+                // Merge to ensure new CRF_DATA structure exists
+                setMasterData(prev => ({
+                    ...INITIAL_MASTER_DATA, 
+                    ...d.data,
+                    // If old data uses arrays, force override to object structure if empty
+                    CRF_DATA: d.data.CRF_DATA || INITIAL_MASTER_DATA.CRF_DATA
+                }));
+            }
             if (doc.id === 'activeModels') setActiveModels(d.data || {});
             if (doc.id === 'monthlyPlans') setMonthlyPlans(d.data || {});
             if (doc.id === 'dailyPlans') setDailyPlans(d.data || {});
@@ -243,42 +257,89 @@ export default function App() {
   };
 
   // --- Settings Logic ---
+  
+  // Unified Add Category (Machine or Product Category)
   const handleSettingsAddCategory = async () => {
     if (!newCategoryInput) return;
-    if (masterData.CF_LINE[newCategoryInput]) { showNotification("Category already exists"); return; }
-    const newMasterData = { ...masterData, CF_LINE: { ...masterData.CF_LINE, [newCategoryInput]: [] } };
-    setMasterData(newMasterData); setNewCategoryInput(''); await updateSettingsDoc('masterData', newMasterData); showNotification("Category Created");
+    
+    let newMasterData = { ...masterData };
+    
+    // Determine which group we are adding a category to
+    if (settingsGroup === 'CRF_DATA') {
+        if (newMasterData.CRF_DATA[newCategoryInput]) { showNotification("Machine already exists"); return; }
+        newMasterData.CRF_DATA[newCategoryInput] = [];
+    } else if (settingsGroup === 'CF_LINE') {
+        if (newMasterData.CF_LINE[newCategoryInput]) { showNotification("Category already exists"); return; }
+        newMasterData.CF_LINE[newCategoryInput] = [];
+    }
+    
+    setMasterData(newMasterData); 
+    setNewCategoryInput(''); 
+    await updateSettingsDoc('masterData', newMasterData); 
+    showNotification("Group/Machine Created");
   };
 
+  // Unified Add Item (Part or Model)
   const handleSettingsAddItem = async () => {
     if (!newItemName) return;
     let newMasterData = { ...masterData };
     let newActiveModels = { ...activeModels, [newItemName]: true };
-    if (settingsGroup === 'CRF_MACHINES') newMasterData.CRF_MACHINES = [...newMasterData.CRF_MACHINES, newItemName];
-    else if (settingsGroup === 'CRF_PARTS') newMasterData.CRF_PARTS = [...newMasterData.CRF_PARTS, newItemName];
-    else if (settingsGroup === 'CF_LINE') {
+
+    if (settingsGroup === 'CRF_DATA') {
+        if(!targetCategoryForModel) { showNotification("Select Machine"); return; }
+        newMasterData.CRF_DATA[targetCategoryForModel] = [...(newMasterData.CRF_DATA[targetCategoryForModel] || []), newItemName];
+    } else if (settingsGroup === 'CF_LINE') {
         if(!targetCategoryForModel) { showNotification("Select Category"); return; }
-        newMasterData.CF_LINE[targetCategoryForModel] = [...newMasterData.CF_LINE[targetCategoryForModel], newItemName];
-    } else if (settingsGroup === 'WD_LINE') newMasterData.WD_LINE["Standard"] = [...newMasterData.WD_LINE["Standard"], newItemName];
-    setMasterData(newMasterData); setActiveModels(newActiveModels); setNewItemName('');
-    await updateSettingsDoc('masterData', newMasterData); await updateSettingsDoc('activeModels', newActiveModels); showNotification(`Item Added`);
+        newMasterData.CF_LINE[targetCategoryForModel] = [...(newMasterData.CF_LINE[targetCategoryForModel] || []), newItemName];
+    } else if (settingsGroup === 'WD_LINE') {
+        newMasterData.WD_LINE["Standard"] = [...(newMasterData.WD_LINE["Standard"] || []), newItemName];
+    }
+    
+    setMasterData(newMasterData); 
+    setActiveModels(newActiveModels); 
+    setNewItemName('');
+    
+    await updateSettingsDoc('masterData', newMasterData); 
+    await updateSettingsDoc('activeModels', newActiveModels); 
+    showNotification(`Item Added`);
   };
 
+  // Unified Delete Category
   const handleSettingsDeleteCategory = async (categoryName) => {
-      if(!confirm(`Delete Category "${categoryName}"?`)) return;
-      const newCFLine = { ...masterData.CF_LINE }; delete newCFLine[categoryName];
-      const newMasterData = { ...masterData, CF_LINE: newCFLine };
-      setMasterData(newMasterData); await updateSettingsDoc('masterData', newMasterData); showNotification("Category Deleted");
+      if(!confirm(`Delete "${categoryName}" and all its contents?`)) return;
+      let newMasterData = { ...masterData };
+      
+      if (settingsGroup === 'CRF_DATA') {
+          const newData = { ...newMasterData.CRF_DATA };
+          delete newData[categoryName];
+          newMasterData.CRF_DATA = newData;
+      } else {
+          const newData = { ...newMasterData.CF_LINE };
+          delete newData[categoryName];
+          newMasterData.CF_LINE = newData;
+      }
+      
+      setMasterData(newMasterData); 
+      await updateSettingsDoc('masterData', newMasterData); 
+      showNotification("Deleted");
   };
 
-  const handleSettingsDeleteItem = async (group, item, category = null) => {
+  // Unified Delete Item
+  const handleSettingsDeleteItem = async (groupKey, item, category = null) => {
     if (!confirm(`Delete ${item}?`)) return;
     let newMasterData = { ...masterData };
-    if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = newMasterData.CRF_MACHINES.filter(i => i !== item);
-    else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = newMasterData.CRF_PARTS.filter(i => i !== item);
-    else if (group === 'CF_LINE' && category) newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category].filter(i => i !== item);
-    else if (group === 'WD_LINE') newMasterData.WD_LINE["Standard"] = (newMasterData.WD_LINE["Standard"] || []).filter(i => i !== item);
-    setMasterData(newMasterData); await updateSettingsDoc('masterData', newMasterData); showNotification("Deleted");
+    
+    if (groupKey === 'CRF_DATA') {
+        newMasterData.CRF_DATA[category] = newMasterData.CRF_DATA[category].filter(i => i !== item);
+    } else if (groupKey === 'CF_LINE') {
+        newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category].filter(i => i !== item);
+    } else if (groupKey === 'WD_LINE') {
+        newMasterData.WD_LINE["Standard"] = newMasterData.WD_LINE["Standard"].filter(i => i !== item);
+    }
+    
+    setMasterData(newMasterData); 
+    await updateSettingsDoc('masterData', newMasterData); 
+    showNotification("Deleted");
   };
 
   // --- Production Logic ---
@@ -286,19 +347,29 @@ export default function App() {
     const isCRF = activeTab === 'CRF';
     const isWD = getDataKeyForArea(activeTab) === 'WD_LINE';
     if (!currentQty || parseInt(currentQty) <= 0) return;
+    
+    // Validation
     if (isCRF && (!selectedCategory || !selectedSubCategory || !selectedModel)) return;
     if (!isCRF && !selectedModel) return;
 
     let newItem = { 
         id: Date.now(), 
         qty: parseInt(currentQty),
-        machine: isCRF ? selectedCategory : null, 
-        part: isCRF ? selectedSubCategory : null, 
+        machine: isCRF ? selectedCategory : null, // Machine
+        part: isCRF ? selectedSubCategory : null, // Part
         model: selectedModel,
         category: !isCRF ? (isWD ? "Standard" : selectedCategory) : null 
     };
     setCurrentBatch([...currentBatch, newItem]);
-    if(isCRF) { setSelectedSubCategory(''); setSelectedModel(''); } else { setSelectedModel(''); }
+    
+    // Reset specific fields
+    if(isCRF) { 
+        // Keep Machine selected, reset Part and Model
+        setSelectedSubCategory(''); 
+        setSelectedModel(''); 
+    } else { 
+        setSelectedModel(''); 
+    }
     setCurrentQty('');
   };
 
@@ -413,8 +484,14 @@ export default function App() {
         
         let relevantModels = [];
         if (masterData[relevantDataKey]) {
-            const allModels = Object.values(masterData[relevantDataKey]).flat();
-            relevantModels = [...new Set(allModels)]; 
+            // For CF Line, aggregate all models from all categories
+            if(relevantDataKey === 'CF_LINE') {
+               relevantModels = Object.values(masterData[relevantDataKey]).flat();
+            } else {
+               // For WD Line, it's simpler
+               relevantModels = Object.values(masterData[relevantDataKey]).flat();
+            }
+            relevantModels = [...new Set(relevantModels)]; 
         }
         
         relevantModels.forEach(model => {
@@ -446,7 +523,13 @@ export default function App() {
 
   const planReportData = useMemo(() => {
     let data = []; const allModels = new Set();
-    Object.values(masterData).forEach(group => { if(Array.isArray(group)) return; Object.values(group).forEach(arr => arr.forEach(m => allModels.add(m))) });
+    Object.values(masterData).forEach(group => { 
+        if(!group) return;
+        // Handle CRF structure differently? No, plan is based on assembly models usually.
+        if(group === masterData.CRF_DATA) return; 
+        Object.values(group).forEach(arr => arr.forEach(m => allModels.add(m))) 
+    });
+    
     if (planReportMode === 'monthly') {
       const plan = monthlyPlans[reportMonth] || {}; Array.from(allModels).forEach(model => { if (plan[model]) data.push({ model, qty: plan[model] }); });
       return { modelAggregates: data.sort((a,b) => b.qty - a.qty) };
@@ -481,14 +564,31 @@ export default function App() {
   const renderEntryScreen = () => {
     const isCRF = activeTab === 'CRF';
     const isWD = getDataKeyForArea(activeTab) === 'WD_LINE';
-    const primaryOptions = isCRF ? masterData.CRF_MACHINES : (isWD ? [] : Object.keys(masterData.CF_LINE));
-    const secondaryOptions = isCRF ? masterData.CRF_PARTS : [];
+    
+    // --- DROPDOWN LOGIC UPDATED ---
+    // Primary Options: CRF -> Machines (Keys of CRF_DATA), Others -> Categories
+    const primaryOptions = isCRF 
+        ? Object.keys(masterData.CRF_DATA || {}) 
+        : (isWD ? [] : Object.keys(masterData.CF_LINE));
+    
+    // Secondary Options: CRF -> Parts (Values of selected Machine key)
+    const secondaryOptions = isCRF && selectedCategory
+        ? (masterData.CRF_DATA[selectedCategory] || [])
+        : [];
+
+    // Model Options: CF Models (Flattened)
     let modelOptions = [];
-    if (isCRF) modelOptions = Object.values(masterData.CF_LINE).flat();
-    else if (isWD) modelOptions = masterData.WD_LINE["Standard"];
-    else if (selectedCategory) modelOptions = masterData.CF_LINE[selectedCategory] || [];
+    if (isCRF) {
+        modelOptions = Object.values(masterData.CF_LINE).flat();
+    } else if (isWD) {
+        modelOptions = masterData.WD_LINE["Standard"];
+    } else if (selectedCategory) {
+        modelOptions = masterData.CF_LINE[selectedCategory] || [];
+    }
+    
+    // Active filter
     const filterActive = (list) => list.filter(item => activeModels[item] !== false);
-    const filteredPrimary = isCRF ? filterActive(primaryOptions) : primaryOptions;
+    const filteredPrimary = isCRF ? filterActive(primaryOptions) : primaryOptions; // Categories usually don't have active flags, but Machines might if added to activeModels
     const filteredSecondary = filterActive(secondaryOptions);
     const filteredModels = filterActive(modelOptions);
 
@@ -603,44 +703,6 @@ export default function App() {
     );
   };
 
-  const renderPlanScreen = () => {
-    if (!isPlanUnlocked) {
-      return (
-        <div className="p-8 max-w-md mx-auto flex flex-col items-center justify-center min-h-[60vh] space-y-6">
-          <div className="bg-blue-100 p-6 rounded-full"><Lock size={48} className="text-blue-600" /></div>
-          <div className="text-center"><h2 className="text-xl font-bold text-gray-800">Plan Locked</h2><p className="text-sm text-gray-500 mt-1">Enter PIN to edit targets</p></div>
-          <div className="w-full max-w-xs space-y-4"><input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="Enter PIN" className="w-full text-center text-2xl tracking-widest p-3 border rounded-lg focus:border-blue-500 outline-none" maxLength={4} /><button onClick={handleUnlockPlan} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700">Unlock</button><p className="text-center text-xs text-gray-400">Default PIN: 1234</p></div>
-        </div>
-      );
-    }
-    return (
-      <div className="p-4 max-w-md mx-auto space-y-6 pb-24">
-        <div className="flex items-center justify-between mb-2"><h2 className="text-lg font-bold text-gray-700">Set Targets</h2><button onClick={() => setIsPlanUnlocked(false)} className="text-xs text-red-500 font-bold flex items-center gap-1 border border-red-100 px-2 py-1 rounded bg-red-50"><Lock size={12}/> Lock</button></div>
-        <div className="flex bg-gray-200 p-1 rounded-lg"><button onClick={() => setPlanMode('daily')} className={`flex-1 py-2 text-sm font-bold rounded-md flex justify-center items-center gap-2 transition-all ${planMode === 'daily' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}><CalendarDays size={16} /> Daily</button><button onClick={() => setPlanMode('monthly')} className={`flex-1 py-2 text-sm font-bold rounded-md flex justify-center items-center gap-2 transition-all ${planMode === 'monthly' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}><Target size={16} /> Monthly</button></div>
-        <Card className="p-4 bg-blue-50 border-blue-100"><label className="text-xs font-bold text-blue-600 mb-1 block">{planMode === 'monthly' ? 'Select Month' : 'Select Date'}</label>{planMode === 'monthly' ? <input type="month" value={planMonth} onChange={(e) => setPlanMonth(e.target.value)} className="w-full p-2 rounded border border-blue-200 text-sm" /> : <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} className="w-full p-2 rounded border border-blue-200 text-sm" />}</Card>
-        <div className="space-y-4">
-           {['CF_LINE', 'WD_LINE'].map(groupKey => {
-               const group = masterData[groupKey];
-               return Object.entries(group).map(([cat, models]) => (
-                   <Card key={cat} className="overflow-hidden mb-3">
-                       <div className="bg-gray-50 p-2 border-b border-gray-100 font-bold text-gray-700 text-xs uppercase">{cat}</div>
-                       <div className="divide-y divide-gray-100 p-2">
-                           {models.map(model => (
-                               <div key={model} className="flex items-center justify-between p-2">
-                                   <span className="text-sm font-medium text-gray-700">{model}</span>
-                                   <input type="number" placeholder="Plan" value={tempPlanData[model] || ''} onChange={(e) => handlePlanInputChange(model, e.target.value)} className="w-20 p-2 text-right border rounded bg-gray-50 focus:bg-white outline-none focus:border-blue-500" />
-                               </div>
-                           ))}
-                       </div>
-                   </Card>
-               ))
-           })}
-        </div>
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-lg z-50"><div className="max-w-md mx-auto"><button onClick={handleSavePlan} className="w-full py-3.5 rounded-xl font-bold text-lg flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-lg active:scale-95 transition-all"><Save size={20} /> Save Plan</button></div></div>
-      </div>
-    );
-  };
-
   const renderSettingsScreen = () => {
     return (
      <div className="p-4 max-w-md mx-auto space-y-6 pb-20">
@@ -651,29 +713,31 @@ export default function App() {
          <button onClick={() => { setSettingsGroup('WD_LINE'); setTargetCategoryForModel(''); }} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'WD_LINE' ? 'bg-blue-600 text-white' : 'bg-white'}`}>Water Dispenser</button>
       </div>
       <div className="grid grid-cols-2 gap-2">
-         <button onClick={() => setSettingsGroup('CRF_MACHINES')} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'CRF_MACHINES' ? 'bg-blue-600 text-white' : 'bg-white'}`}>CRF Machines</button>
-         <button onClick={() => setSettingsGroup('CRF_PARTS')} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'CRF_PARTS' ? 'bg-blue-600 text-white' : 'bg-white'}`}>CRF Parts</button>
+         <button onClick={() => setSettingsGroup('CRF_DATA')} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'CRF_DATA' ? 'bg-blue-600 text-white' : 'bg-white'}`}>CRF Config</button>
       </div>
 
-      {settingsGroup === 'CF_LINE' && (
+      {/* --- Add Machine (Category) for CRF OR Category for CF --- */}
+      {(settingsGroup === 'CF_LINE' || settingsGroup === 'CRF_DATA') && (
         <Card className="p-4 bg-orange-50 border-orange-100">
-           <label className="text-xs font-bold text-orange-600 mb-2 block uppercase flex items-center gap-1"><FolderPlus size={14}/> Add Product Category</label>
+           <label className="text-xs font-bold text-orange-600 mb-2 block uppercase flex items-center gap-1"><FolderPlus size={14}/> Add {settingsGroup === 'CRF_DATA' ? 'Machine' : 'Product Category'}</label>
            <div className="flex gap-2">
-               <input type="text" value={newCategoryInput} onChange={(e) => setNewCategoryInput(e.target.value)} placeholder="e.g. Inverter Series" className="flex-1 p-2 border rounded text-sm bg-white" />
+               <input type="text" value={newCategoryInput} onChange={(e) => setNewCategoryInput(e.target.value)} placeholder={settingsGroup === 'CRF_DATA' ? "e.g. Laser Cutter" : "e.g. Inverter Series"} className="flex-1 p-2 border rounded text-sm bg-white" />
                <button onClick={handleSettingsAddCategory} className="bg-orange-600 text-white px-4 rounded font-bold text-sm"><Plus size={18} /></button>
            </div>
         </Card>
       )}
 
+      {/* --- Add Part/Model Item --- */}
       <Card className="p-4">
           <label className="text-xs font-bold text-gray-500 mb-2 block uppercase">
-              {settingsGroup === 'CRF_MACHINES' ? 'Add Machine' : settingsGroup === 'CRF_PARTS' ? 'Add Part' : 'Add Model'}
+              {settingsGroup === 'CRF_DATA' ? 'Add Part to Machine' : 'Add Model'}
           </label>
           <div className="space-y-2">
-             {settingsGroup === 'CF_LINE' && (
+             {(settingsGroup === 'CF_LINE' || settingsGroup === 'CRF_DATA') && (
                  <select value={targetCategoryForModel} onChange={(e) => setTargetCategoryForModel(e.target.value)} className="w-full p-2 border rounded text-sm bg-white">
-                    <option value="">Select Category...</option>
-                    {Object.keys(masterData.CF_LINE).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    <option value="">Select {settingsGroup === 'CRF_DATA' ? 'Machine' : 'Category'}...</option>
+                    {/* For CRF, keys are machines. For CF, keys are categories */}
+                    {Object.keys(settingsGroup === 'CRF_DATA' ? masterData.CRF_DATA : masterData.CF_LINE).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                  </select>
              )}
              <div className="flex gap-2">
@@ -687,25 +751,24 @@ export default function App() {
           <h3 className="text-xs font-bold text-gray-400 uppercase mb-3">Existing Items</h3>
           <div className="divide-y divide-gray-100">
              
-             {/* CRF MACHINES */}
-             {settingsGroup === 'CRF_MACHINES' && masterData.CRF_MACHINES.map(m => (
-                 <div key={m} className="flex justify-between py-2 text-sm items-center">
-                     <span className={activeModels[m] === false ? 'text-gray-400 line-through' : ''}>{m}</span>
-                     <div className="flex gap-3">
-                         <button onClick={() => toggleModelStatus(m)} className={activeModels[m] !== false ? 'text-green-600' : 'text-gray-300'}>{activeModels[m] !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}</button>
-                         <button onClick={() => handleSettingsDeleteItem('CRF_MACHINES', m)} className="text-red-400"><Trash2 size={14}/></button>
+             {/* CRF CONFIG (Nested: Machine -> Parts) */}
+             {settingsGroup === 'CRF_DATA' && Object.keys(masterData.CRF_DATA).map(machine => (
+                 <div key={machine} className="mb-4">
+                     <div className="bg-gray-100 p-2 text-xs font-bold rounded flex justify-between items-center text-gray-700">
+                         {machine} (Machine)
+                         <button onClick={() => handleSettingsDeleteCategory(machine)} className="text-red-500 hover:bg-red-100 p-1 rounded" title="Delete Machine"><Trash2 size={14}/></button>
                      </div>
-                 </div>
-             ))}
-             
-             {/* CRF PARTS */}
-             {settingsGroup === 'CRF_PARTS' && masterData.CRF_PARTS.map(m => (
-                 <div key={m} className="flex justify-between py-2 text-sm items-center">
-                     <span className={activeModels[m] === false ? 'text-gray-400 line-through' : ''}>{m}</span>
-                     <div className="flex gap-3">
-                         <button onClick={() => toggleModelStatus(m)} className={activeModels[m] !== false ? 'text-green-600' : 'text-gray-300'}>{activeModels[m] !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}</button>
-                         <button onClick={() => handleSettingsDeleteItem('CRF_PARTS', m)} className="text-red-400"><Trash2 size={14}/></button>
-                     </div>
+                     {masterData.CRF_DATA[machine].map(part => (
+                        <div key={part} className="flex justify-between py-2 pl-2 text-sm border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                            <span className={activeModels[part] === false ? 'text-gray-400 line-through' : ''}>{part}</span> 
+                            <div className="flex gap-3">
+                                <button onClick={() => toggleModelStatus(part)} className={activeModels[part] !== false ? 'text-green-600' : 'text-gray-300'}>
+                                   {activeModels[part] !== false ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                                </button>
+                                <button onClick={() => handleSettingsDeleteItem('CRF_DATA', part, machine)} className="text-red-400"><Trash2 size={14}/></button>
+                            </div>
+                        </div>
+                     ))}
                  </div>
              ))}
              
