@@ -4,7 +4,7 @@ import {
   AlertCircle, ChevronDown, Settings, ToggleLeft, ToggleRight,
   Target, CalendarDays, GitMerge, ArrowDown, Lock, Unlock, Pencil,
   Calendar, Download, FolderPlus, RefreshCw, Wifi, WifiOff, History,
-  MessageCircle, Filter, X
+  MessageCircle, Filter, X, Clock
 } from 'lucide-react';
 
 // --- Firebase Imports ---
@@ -36,12 +36,21 @@ const AREAS = [
   "CRF", "Pre-assembly", "Door foaming", "Cabinet foaming", "CF final", "WD final"
 ];
 
+const TIME_SLOTS = [
+  "08:00 - 09:00", "09:00 - 10:00", "10:00 - 11:00", "11:00 - 12:00",
+  "12:00 - 13:00", "13:00 - 14:00", "14:00 - 15:00", "15:00 - 16:00",
+  "16:00 - 17:00", "17:00 - 18:00", "18:00 - 19:00", "19:00 - 20:00",
+  "20:00 - 21:00", "21:00 - 22:00", "22:00 - 23:00", "23:00 - 00:00",
+  "00:00 - 01:00", "01:00 - 02:00", "02:00 - 03:00", "03:00 - 04:00",
+  "04:00 - 05:00", "05:00 - 06:00", "06:00 - 07:00", "07:00 - 08:00"
+];
+
 const PROCESS_FLOW = {
   mainLine: ["Pre-assembly", "Cabinet foaming", "CF final"],
   independent: ["CRF", "Door foaming", "WD final"]
 };
 
-// Default Initial Data (Includes pre-loaded Supervisor)
+// Default Initial Data
 const INITIAL_MASTER_DATA = {
   SUPERVISORS: ["Jatish Hansora"],
   CRF_MACHINES: ["Komatsu Press", "Thermoforming", "Extrusion", "Paint Shop"],
@@ -99,6 +108,7 @@ export default function App() {
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [supervisorName, setSupervisorName] = useState('');
   
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedSubCategory, setSelectedSubCategory] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
@@ -123,9 +133,9 @@ export default function App() {
   // Report State
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportArea, setReportArea] = useState(AREAS[0]);
-  const [reportType, setReportType] = useState('daily');
+  const [reportType, setReportType] = useState('production'); // Changed default to 'production'
   const [reportModel, setReportModel] = useState('');
-  const [productionTimeframe, setProductionTimeframe] = useState('daily');
+  const [productionTimeframe, setProductionTimeframe] = useState('hourly'); // Added hourly
   
   // Plan Report State
   const [planReportMode, setPlanReportMode] = useState('monthly');
@@ -271,12 +281,14 @@ export default function App() {
   const handleAddBatchItem = () => {
     const isCRF = activeTab === 'CRF';
     const isWD = getDataKeyForArea(activeTab) === 'WD_LINE';
+    if (!selectedTimeSlot) return showNotification("⚠️ Please select a Time Slot");
     if (!currentQty || parseInt(currentQty) <= 0) return;
     if (isCRF && (!selectedCategory || !selectedSubCategory || !selectedModel)) return;
     if (!isCRF && !selectedModel) return;
 
     let newItem = {
         id: Date.now(),
+        timeSlot: selectedTimeSlot,
         qty: parseInt(currentQty),
         machine: isCRF ? selectedCategory : null,
         part: isCRF ? selectedSubCategory : null,
@@ -284,6 +296,8 @@ export default function App() {
         category: !isCRF ? (isWD ? "Standard" : selectedCategory) : null
     };
     setCurrentBatch([...(Array.isArray(currentBatch) ? currentBatch : []), newItem]);
+    
+    // Reset specific fields, keep timeSlot active for multiple entries in same hour
     if(isCRF) { setSelectedSubCategory(''); setSelectedModel(''); } else { setSelectedModel(''); }
     setCurrentQty('');
   };
@@ -318,6 +332,8 @@ export default function App() {
             showNotification("Production Submitted!");
         }
         setCurrentBatch([]);
+        // Optional: clear timeslot after submission if you prefer a blank slate
+        // setSelectedTimeSlot(''); 
     } catch (e) {
         console.error(e);
         showNotification("Error Saving Data");
@@ -357,6 +373,7 @@ export default function App() {
     let totalUnits = 0;
     const agg = {};
     
+    // Aggregating by Model for the WhatsApp summary to keep it readable
     todaysEntries.forEach(entry => {
         (entry.items || []).forEach(item => {
             const key = activeTab === 'CRF' ? `${item.part} (${item.model})` : item.model;
@@ -369,7 +386,7 @@ export default function App() {
         productionText += `- ${mod}: *${qty}*\n`;
     });
 
-    const msg = `*End Shift Report - Voltas CR Waghodia*\nDate: ${entryDate}\nArea: ${activeTab}\nSupervisor: ${supervisorName || 'Not Specified'}\n\n*Production Data (Total: ${totalUnits}):*\n${productionText || 'No production logged'}\n*Manpower Count:* ${shiftManpower || 0}\n*Loss Details:* ${shiftLoss || 'None'}`;
+    const msg = `*End Shift Report - Voltas CR Waghodia*\nDate: ${entryDate}\nArea: ${activeTab}\nSupervisor: ${supervisorName || 'Not Specified'}\n\n*Production Summary (Total: ${totalUnits}):*\n${productionText || 'No production logged'}\n*Manpower Count:* ${shiftManpower || 0}\n*Loss Details:* ${shiftLoss || 'None'}`;
 
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
     setShowShiftModal(false);
@@ -448,6 +465,41 @@ export default function App() {
     }
   }, [entries, dailyPlans, monthlyPlans, reportDate, reportMonth, reportArea, productionTimeframe, activeModels, masterData]);
 
+  // Hourly Report Data Logic
+  const hourlyReportData = useMemo(() => {
+    const dayEntries = Array.isArray(entries) ? entries.filter(e => e.date === reportDate && e.area === reportArea) : [];
+    const slots = {};
+    let totalForDay = 0;
+    
+    dayEntries.forEach(entry => {
+        (entry.items || []).forEach(item => {
+            const slot = item.timeSlot || 'Unspecified';
+            if (!slots[slot]) slots[slot] = { items: [], total: 0 };
+            
+            // Combine matching parts/models within the same hour
+            let existing = slots[slot].items.find(i => i.model === item.model && i.part === item.part);
+            if (existing) {
+                existing.qty += item.qty;
+            } else {
+                slots[slot].items.push({...item});
+            }
+            slots[slot].total += item.qty;
+            totalForDay += item.qty;
+        });
+    });
+    
+    // Sort slots based on the TIME_SLOTS array order
+    const sortedSlots = Object.keys(slots).sort((a, b) => {
+        let idxA = TIME_SLOTS.indexOf(a);
+        let idxB = TIME_SLOTS.indexOf(b);
+        if (idxA === -1) idxA = 999;
+        if (idxB === -1) idxB = 999;
+        return idxA - idxB;
+    });
+
+    return { sortedSlots, slotsData: slots, totalForDay };
+  }, [entries, reportDate, reportArea]);
+
   // Advanced Excel Report Filter Logic
   const advancedReportData = useMemo(() => {
     let filtered = Array.isArray(entries) ? entries.filter(e => e.date >= advStart && e.date <= advEnd) : [];
@@ -461,6 +513,7 @@ export default function App() {
                 Date: entry.date,
                 Area: entry.area,
                 Supervisor: entry.supervisor || '-',
+                Time_Slot: item.timeSlot || 'Unspecified',
                 Machine_Category: item.category || item.machine || '-',
                 Part: item.part || '-',
                 Model: item.model,
@@ -544,7 +597,7 @@ export default function App() {
     return (
       <div className="space-y-4 pb-28">
         <div className="bg-white shadow-sm sticky top-[72px] z-40 overflow-x-auto no-scrollbar border-b border-gray-100">
-          <div className="flex p-2 gap-2 min-w-max">{(AREAS || []).map(area => (<button key={area} onClick={() => { setActiveTab(area); setSelectedCategory(''); setSelectedSubCategory(''); setSelectedModel(''); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === area ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-50 text-gray-600'}`}>{area}</button>))}</div>
+          <div className="flex p-2 gap-2 min-w-max">{(AREAS || []).map(area => (<button key={area} onClick={() => { setActiveTab(area); setSelectedCategory(''); setSelectedSubCategory(''); setSelectedModel(''); setSelectedTimeSlot(''); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === area ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-50 text-gray-600'}`}>{area}</button>))}</div>
         </div>
         <div className="px-4 space-y-4 max-w-md mx-auto mt-4">
           <Card className="p-4 border-l-4 border-l-blue-500">
@@ -578,11 +631,51 @@ export default function App() {
               {!isWD && (<div><label className="text-xs text-gray-500 font-semibold mb-1 block">{isCRF ? 'Select Machine' : 'Product Category'}</label><div className="relative"><select value={selectedCategory} onChange={(e) => { setSelectedCategory(e.target.value); if(!isCRF) setSelectedModel(''); }} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500 appearance-none"><option value="">Select...</option>{(filteredPrimary || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}</select><ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} /></div></div>)}
               {isCRF && (<div><label className="text-xs text-gray-500 font-semibold mb-1 block">Select Part</label><div className="relative"><select value={selectedSubCategory} onChange={(e) => setSelectedSubCategory(e.target.value)} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500 appearance-none"><option value="">Select Part...</option>{(filteredSecondary || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}</select><ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} /></div></div>)}
               {(selectedCategory || isWD || isCRF) && (<div className="animate-in fade-in slide-in-from-top-2 duration-300"><label className="text-xs text-gray-500 font-semibold mb-1 block">{isCRF ? 'For Model (Target)' : 'Model (Capacity)'}</label><div className="relative"><select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500 appearance-none"><option value="">Select Model</option>{(filteredModels || []).map(model => <option key={model} value={model}>{model}</option>)}</select><ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} /></div></div>)}
-              <div className="flex gap-3 items-end"><div className="flex-1"><label className="text-xs text-gray-500 font-semibold mb-1 block">Quantity</label><input type="number" value={currentQty} onChange={(e) => setCurrentQty(e.target.value)} placeholder="0" className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500" /></div><button onClick={handleAddBatchItem} className="bg-blue-600 text-white p-3 rounded-lg font-medium flex items-center gap-2"><Plus size={20} /> Add</button></div>
+              
+              {/* --- New Hourly Dropdown & Qty Row --- */}
+              <div className="flex gap-3 items-end">
+                  <div className="flex-[1.5]">
+                      <label className="text-xs text-gray-500 font-semibold mb-1 block">Time Slot</label>
+                      <div className="relative">
+                          <select value={selectedTimeSlot} onChange={(e) => setSelectedTimeSlot(e.target.value)} className="w-full p-3 bg-blue-50 rounded-lg border border-blue-200 outline-none focus:border-blue-500 appearance-none text-blue-800 font-medium">
+                              <option value="">Select Hour...</option>
+                              {TIME_SLOTS.map(slot => <option key={slot} value={slot}>{slot}</option>)}
+                          </select>
+                          <ChevronDown className="absolute right-3 top-3.5 text-blue-400 pointer-events-none" size={16} />
+                      </div>
+                  </div>
+                  <div className="flex-1">
+                      <label className="text-xs text-gray-500 font-semibold mb-1 block">Quantity</label>
+                      <input type="number" value={currentQty} onChange={(e) => setCurrentQty(e.target.value)} placeholder="0" className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500" />
+                  </div>
+              </div>
+              <button onClick={handleAddBatchItem} className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold flex items-center justify-center gap-2 mt-1 hover:bg-blue-700 transition-all shadow-sm"><Plus size={20} /> Add to Log</button>
             </div>
           </Card>
 
-          {Array.isArray(currentBatch) && currentBatch.length > 0 && (<div className="space-y-2 animate-in fade-in slide-in-from-bottom-4"><h3 className="text-sm font-semibold text-gray-500 ml-1">Entries to {editingId ? 'Update' : 'Submit'}</h3>{currentBatch.map((item) => (<div key={item.id} className="bg-white p-3 rounded-lg border border-gray-200 flex justify-between items-center shadow-sm"><div>{isCRF ? (<><div className="font-bold text-gray-800">{item.part}</div><div className="text-xs text-gray-500">{item.machine} | For: {item.model}</div></>) : (<><div className="font-bold text-gray-800">{item.model}</div>{!isWD && <div className="text-xs text-gray-500">{item.category}</div>}</>)}</div><div className="flex items-center gap-4"><span className="text-lg font-bold text-blue-600">{item.qty}</span><button onClick={() => removeBatchItem(item.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={18} /></button></div></div>))}</div>)}
+          {Array.isArray(currentBatch) && currentBatch.length > 0 && (
+              <div className="space-y-2 animate-in fade-in slide-in-from-bottom-4">
+                  <h3 className="text-sm font-semibold text-gray-500 ml-1">Entries to {editingId ? 'Update' : 'Submit'}</h3>
+                  {currentBatch.map((item) => (
+                      <div key={item.id} className="bg-white p-3 rounded-lg border border-gray-200 flex justify-between items-center shadow-sm">
+                          <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold flex items-center gap-1"><Clock size={10}/> {item.timeSlot}</span>
+                              </div>
+                              {isCRF ? (
+                                  <><div className="font-bold text-gray-800">{item.part}</div><div className="text-xs text-gray-500">{item.machine} | For: {item.model}</div></>
+                              ) : (
+                                  <><div className="font-bold text-gray-800">{item.model}</div>{!isWD && <div className="text-xs text-gray-500">{item.category}</div>}</>
+                              )}
+                          </div>
+                          <div className="flex items-center gap-4">
+                              <span className="text-lg font-bold text-blue-600">{item.qty}</span>
+                              <button onClick={() => removeBatchItem(item.id)} className="text-red-400 hover:text-red-600 p-1 bg-red-50 rounded"><Trash2 size={16} /></button>
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          )}
           
           <div className="fixed bottom-0 left-0 right-0 p-3 bg-white border-t border-gray-100 shadow-lg z-40">
             <div className="max-w-md mx-auto flex gap-2">
@@ -601,13 +694,21 @@ export default function App() {
                   <h3 className="text-sm font-bold text-gray-500 mb-3 flex items-center gap-2"><History size={16} /> Recent Submissions ({entryDate})</h3>
                   <div className="space-y-3">
                       {recentEntries.map(entry => (
-                          <div key={entry.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200 text-sm">
-                              <div className="flex justify-between items-start mb-2">
+                          <div key={entry.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200 text-sm shadow-sm">
+                              <div className="flex justify-between items-start mb-3 border-b border-gray-200 pb-2">
                                   <div><span className="font-bold text-gray-800 block">{entry.supervisor}</span><span className="text-xs text-gray-500">{new Date(entry.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>
                                   <div className="flex gap-2"><button onClick={() => handleEditEntry(entry)} className="p-1.5 bg-white border border-gray-200 rounded text-blue-600 shadow-sm"><Pencil size={14} /></button><button onClick={() => handleDeleteEntry(entry.id)} className="p-1.5 bg-white border border-gray-200 rounded text-red-500 shadow-sm"><Trash2 size={14} /></button></div>
                               </div>
-                              <div className="space-y-1">
-                                  {(entry.items || []).map((item, idx) => (<div key={idx} className="flex justify-between text-xs text-gray-600 border-b border-gray-200 last:border-0 pb-1 last:pb-0"><span>{isCRF ? `${item.part} (${item.model})` : item.model}</span><span className="font-bold">{item.qty}</span></div>))}
+                              <div className="space-y-2">
+                                  {(entry.items || []).map((item, idx) => (
+                                      <div key={idx} className="flex justify-between items-center text-xs text-gray-700 bg-white p-2 rounded border border-gray-100">
+                                          <div>
+                                              <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold mr-1">{item.timeSlot || 'Full Day'}</span>
+                                              <span className="font-medium">{isCRF ? `${item.part} (${item.model})` : item.model}</span>
+                                          </div>
+                                          <span className="font-bold text-blue-600 text-sm">{item.qty}</span>
+                                      </div>
+                                  ))}
                               </div>
                           </div>
                       ))}
@@ -634,8 +735,8 @@ export default function App() {
                             <textarea value={shiftLoss} onChange={(e) => setShiftLoss(e.target.value)} placeholder="Describe any machine breakdown or material shortage..." rows="3" className="w-full p-3 bg-gray-50 rounded-lg border outline-none focus:border-green-500"></textarea>
                         </div>
                         <div className="pt-3 flex gap-2">
-                            <button onClick={() => setShowShiftModal(false)} className="flex-1 py-3 text-gray-600 font-bold bg-gray-100 rounded-xl hover:bg-gray-200">Cancel</button>
-                            <button onClick={generateWhatsAppReport} className="flex-1 py-3 bg-green-500 text-white font-bold rounded-xl shadow-lg hover:bg-green-600">Share WhatsApp</button>
+                            <button onClick={() => setShowShiftModal(false)} className="flex-1 py-3 text-gray-600 font-bold bg-gray-100 rounded-xl hover:bg-gray-200 transition-all">Cancel</button>
+                            <button onClick={generateWhatsAppReport} className="flex-1 py-3 bg-green-500 text-white font-bold rounded-xl shadow-lg hover:bg-green-600 transition-all flex justify-center items-center gap-2"><MessageCircle size={18}/> Share</button>
                         </div>
                     </div>
                 </div>
@@ -652,7 +753,7 @@ export default function App() {
     <div className="p-4 max-w-md mx-auto space-y-6 pb-20">
       <div className="flex bg-gray-200 p-1 rounded-lg">
           <button onClick={() => setReportType('flow')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'flow' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Process Flow</button>
-          <button onClick={() => setReportType('daily')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'daily' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Production</button>
+          <button onClick={() => setReportType('production')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'production' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Production</button>
           <button onClick={() => setReportType('plan')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'plan' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Plan Status</button>
           <button onClick={() => setReportType('advanced')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'advanced' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Advanced</button>
       </div>
@@ -671,18 +772,70 @@ export default function App() {
         </div>
       )}
 
-      {reportType === 'daily' && (
+      {reportType === 'production' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
-           <div className="flex gap-2 mb-2"><button onClick={() => setProductionTimeframe('daily')} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'daily' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><CalendarDays size={14}/> Daily Report</button><button onClick={() => setProductionTimeframe('monthly')} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'monthly' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><Calendar size={14}/> Monthly Report</button></div>
-          <Card className="p-4 space-y-4 bg-white border border-gray-200">
-             <div className="flex justify-between items-center border-b border-gray-100 pb-2"><span className="text-xs font-bold text-gray-400 uppercase">Filter & Export</span><button onClick={() => { const data = productionReportData.rows || []; const filename = `${productionTimeframe}_Production_${productionTimeframe === 'daily' ? reportDate : reportMonth}`; let cleanData; if (isCRF) { cleanData = data.map(r => ({ Machine: r.machine, Part: r.part, Model: r.model, Qty: r.actual })); } else { cleanData = data.map(r => ({ Model: r.model, Plan: r.plan, Actual: r.actual, Achievement_Percent: r.percent + '%' })); } exportToCSV(cleanData, filename); }} className="text-blue-600 bg-blue-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export Excel</button></div>
-            <div className="grid grid-cols-2 gap-3">{productionTimeframe === 'daily' ? (<div><label className="text-xs font-bold text-gray-500 mb-1 block">Date</label><input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>) : (<div><label className="text-xs font-bold text-gray-500 mb-1 block">Month</label><input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>)}<div><label className="text-xs font-bold text-gray-500 mb-1 block">Area</label><select value={reportArea} onChange={(e) => setReportArea(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm bg-white">{(AREAS || []).map(area => <option key={area} value={area}>{area}</option>)}</select></div></div>
-          </Card>
-          <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
-            <thead className="bg-gray-50 border-b border-gray-200 w-full block"><tr className="flex w-full">{isCRF ? (<><th className="p-3 text-xs font-bold text-gray-500 uppercase w-1/3 text-left">Part/Machine</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-left">For Model</th><th className="p-3 text-xs font-bold text-gray-500 uppercase w-20 text-right">Qty</th></>) : (<><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-left">Model</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">{productionTimeframe === 'daily' ? 'D.Plan' : 'M.Budget'}</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">Act</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">%</th></>)}</tr></thead>
-            <tbody className="divide-y divide-gray-100 block w-full max-h-[400px] overflow-y-auto">{(productionReportData.rows || []).map((row, idx) => (<tr key={idx} className="hover:bg-gray-50 text-sm flex w-full">{isCRF ? (<><td className="p-3 font-medium text-gray-700 w-1/3 text-left"><div className="font-bold">{row.part}</div><div className="text-[10px] text-gray-400">{row.machine}</div></td><td className="p-3 text-gray-600 flex-1 text-left flex items-center">{row.model}</td><td className="p-3 text-right font-bold text-blue-600 w-20">{row.actual}</td></>) : (<><td className="p-3 font-medium text-gray-700 flex-1 text-left">{row.model}</td><td className="p-3 text-right text-gray-400 font-medium flex-1">{row.plan || '-'}</td><td className="p-3 text-right font-bold text-blue-600 flex-1">{row.actual}</td><td className="p-3 text-right flex-1"><span className={`px-2 py-0.5 rounded text-xs font-bold ${row.percent >= 90 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{row.percent}%</span></td></>)}</tr>))}</tbody>
-             <div className="bg-blue-50 p-3 flex justify-between items-center border-t border-blue-100"><span className="text-blue-800 font-bold text-sm">Total {isCRF ? 'Parts' : 'Units'}</span><span className="text-blue-800 font-bold text-lg">{productionReportData.totalActual}</span></div>
-          </div>
+           {/* Sub-toggles for Production Report */}
+           <div className="flex gap-2 mb-2">
+               <button onClick={() => setProductionTimeframe('hourly')} className={`flex-1 py-1.5 text-[10px] font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'hourly' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><Clock size={12}/> Hourly Run</button>
+               <button onClick={() => setProductionTimeframe('daily')} className={`flex-1 py-1.5 text-[10px] font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'daily' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><CalendarDays size={12}/> Daily Total</button>
+               <button onClick={() => setProductionTimeframe('monthly')} className={`flex-1 py-1.5 text-[10px] font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'monthly' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><Calendar size={12}/> Monthly Run</button>
+           </div>
+           
+           <Card className="p-4 space-y-4 bg-white border border-gray-200">
+             <div className="grid grid-cols-2 gap-3">
+                 {productionTimeframe === 'monthly' ? (<div><label className="text-xs font-bold text-gray-500 mb-1 block">Month</label><input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>) : (<div><label className="text-xs font-bold text-gray-500 mb-1 block">Date</label><input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>)}
+                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">Area</label><select value={reportArea} onChange={(e) => setReportArea(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm bg-white">{(AREAS || []).map(area => <option key={area} value={area}>{area}</option>)}</select></div>
+             </div>
+           </Card>
+
+           {/* Hourly Breakdown View */}
+           {productionTimeframe === 'hourly' && (
+               <div className="space-y-3">
+                   {hourlyReportData.sortedSlots.length > 0 ? (
+                       <>
+                           <div className="flex justify-between items-center px-2">
+                               <span className="font-bold text-gray-700 text-sm">Hourly Breakdown ({reportDate})</span>
+                               <span className="font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded text-sm">Total: {hourlyReportData.totalForDay}</span>
+                           </div>
+                           {hourlyReportData.sortedSlots.map(slot => (
+                               <Card key={slot} className="overflow-hidden border-l-4 border-l-blue-500">
+                                   <div className="bg-gray-50 p-2 border-b border-gray-100 flex justify-between items-center">
+                                       <span className="font-bold text-gray-800 text-sm flex items-center gap-1"><Clock size={14} className="text-blue-500"/> {slot}</span>
+                                       <span className="text-xs font-bold text-gray-500">{hourlyReportData.slotsData[slot].total} Units</span>
+                                   </div>
+                                   <div className="divide-y divide-gray-50">
+                                       {hourlyReportData.slotsData[slot].items.map((item, idx) => (
+                                           <div key={idx} className="p-3 text-sm flex justify-between items-center bg-white hover:bg-gray-50 transition-colors">
+                                               <div>
+                                                   <div className="font-bold text-gray-800">{isCRF ? `${item.part} (${item.model})` : item.model}</div>
+                                                   <div className="text-[10px] text-gray-400">{isCRF ? item.machine : item.category}</div>
+                                               </div>
+                                               <div className="font-bold text-blue-600 text-lg">{item.qty}</div>
+                                           </div>
+                                       ))}
+                                   </div>
+                               </Card>
+                           ))}
+                       </>
+                   ) : (
+                       <div className="p-8 text-center text-gray-400 text-sm bg-white rounded-xl border border-gray-200">No production logged for this date and area yet.</div>
+                   )}
+               </div>
+           )}
+
+           {/* Daily / Monthly Aggregated View */}
+           {(productionTimeframe === 'daily' || productionTimeframe === 'monthly') && (
+               <>
+                   <div className="flex justify-end mb-2">
+                       <button onClick={() => { const data = productionReportData.rows || []; const filename = `${productionTimeframe}_Production_${productionTimeframe === 'daily' ? reportDate : reportMonth}`; let cleanData; if (isCRF) { cleanData = data.map(r => ({ Machine: r.machine, Part: r.part, Model: r.model, Qty: r.actual })); } else { cleanData = data.map(r => ({ Model: r.model, Plan: r.plan, Actual: r.actual, Achievement_Percent: r.percent + '%' })); } exportToCSV(cleanData, filename); }} className="text-blue-600 bg-blue-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export Aggregate</button>
+                   </div>
+                   <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+                       <thead className="bg-gray-50 border-b border-gray-200 w-full block"><tr className="flex w-full">{isCRF ? (<><th className="p-3 text-xs font-bold text-gray-500 uppercase w-1/3 text-left">Part/Machine</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-left">For Model</th><th className="p-3 text-xs font-bold text-gray-500 uppercase w-20 text-right">Qty</th></>) : (<><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-left">Model</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">{productionTimeframe === 'daily' ? 'D.Plan' : 'M.Budget'}</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">Act</th><th className="p-3 text-xs font-bold text-gray-500 uppercase flex-1 text-right">%</th></>)}</tr></thead>
+                       <tbody className="divide-y divide-gray-100 block w-full max-h-[400px] overflow-y-auto">{(productionReportData.rows || []).map((row, idx) => (<tr key={idx} className="hover:bg-gray-50 text-sm flex w-full">{isCRF ? (<><td className="p-3 font-medium text-gray-700 w-1/3 text-left"><div className="font-bold">{row.part}</div><div className="text-[10px] text-gray-400">{row.machine}</div></td><td className="p-3 text-gray-600 flex-1 text-left flex items-center">{row.model}</td><td className="p-3 text-right font-bold text-blue-600 w-20">{row.actual}</td></>) : (<><td className="p-3 font-medium text-gray-700 flex-1 text-left">{row.model}</td><td className="p-3 text-right text-gray-400 font-medium flex-1">{row.plan || '-'}</td><td className="p-3 text-right font-bold text-blue-600 flex-1">{row.actual}</td><td className="p-3 text-right flex-1"><span className={`px-2 py-0.5 rounded text-xs font-bold ${row.percent >= 90 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{row.percent}%</span></td></>)}</tr>))}</tbody>
+                       <div className="bg-blue-50 p-3 flex justify-between items-center border-t border-blue-100"><span className="text-blue-800 font-bold text-sm">Total {isCRF ? 'Parts' : 'Units'}</span><span className="text-blue-800 font-bold text-lg">{productionReportData.totalActual}</span></div>
+                   </div>
+               </>
+           )}
         </div>
       )}
 
@@ -692,7 +845,7 @@ export default function App() {
            <Card className="p-4 bg-white border border-gray-200">
              <div className="flex justify-between items-center mb-3 border-b border-gray-100 pb-2">
                  <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={14}/> Advanced Filters</span>
-                 <button onClick={() => exportToCSV(advancedReportData, `AdvancedReport_${advStart}_to_${advEnd}`)} className="text-green-600 bg-green-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export All Data</button>
+                 <button onClick={() => exportToCSV(advancedReportData, `AdvancedReport_${advStart}_to_${advEnd}`)} className="text-green-600 bg-green-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export Excel</button>
              </div>
              <div className="grid grid-cols-2 gap-3 mb-3">
                  <div><label className="text-xs font-bold text-gray-500 mb-1 block">From Date</label><input type="date" value={advStart} onChange={(e) => setAdvStart(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>
@@ -710,21 +863,24 @@ export default function App() {
                <div className="max-h-[400px] overflow-y-auto">
                    {advancedReportData.length > 0 ? (
                        <table className="w-full text-left text-sm whitespace-nowrap">
-                           <thead className="bg-white sticky top-0 border-b border-gray-200">
+                           <thead className="bg-white sticky top-0 border-b border-gray-200 shadow-sm">
                                <tr>
-                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Date</th>
-                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Area / Machine</th>
-                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Model / Part</th>
-                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase text-right">Qty</th>
+                                   <th className="p-3 text-[10px] font-bold text-gray-500 uppercase">Date/Time</th>
+                                   <th className="p-3 text-[10px] font-bold text-gray-500 uppercase">Area/Machine</th>
+                                   <th className="p-3 text-[10px] font-bold text-gray-500 uppercase">Model/Part</th>
+                                   <th className="p-3 text-[10px] font-bold text-gray-500 uppercase text-right">Qty</th>
                                </tr>
                            </thead>
                            <tbody className="divide-y divide-gray-100">
                                {advancedReportData.map((row, idx) => (
                                    <tr key={idx} className="hover:bg-gray-50">
-                                       <td className="p-3 text-gray-700">{row.Date}</td>
+                                       <td className="p-3">
+                                          <div className="text-gray-800 font-medium">{row.Date}</div>
+                                          <div className="text-[10px] bg-blue-50 text-blue-600 inline-block px-1 rounded">{row.Time_Slot}</div>
+                                       </td>
                                        <td className="p-3"><div className="font-medium text-gray-800">{row.Area}</div><div className="text-[10px] text-gray-400">{row.Machine_Category}</div></td>
                                        <td className="p-3"><div className="font-medium text-gray-800">{row.Model}</div><div className="text-[10px] text-gray-400">{row.Part !== '-' ? row.Part : ''}</div></td>
-                                       <td className="p-3 text-right font-bold text-blue-600">{row.Qty}</td>
+                                       <td className="p-3 text-right font-bold text-blue-600 text-lg">{row.Qty}</td>
                                    </tr>
                                ))}
                            </tbody>
