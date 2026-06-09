@@ -489,7 +489,7 @@ export default function App() {
     else if (isWD) modelOptions = masterData.WD_LINE["Standard"];
     else if (selectedCategory) modelOptions = masterData.CF_LINE[selectedCategory] || [];
     const filterActive = (list) => list?
-      filter(item => activeModels[item] !== false);
+      filter(item => activeModels[item] !== false):
     const filteredPrimary = isCRF ? filterActive(primaryOptions) : primaryOptions;
     const filteredSecondary = filterActive(secondaryOptions);
     const filteredModels = filterActive(modelOptions);
