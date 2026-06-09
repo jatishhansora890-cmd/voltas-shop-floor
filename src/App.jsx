@@ -70,6 +70,14 @@ const getDataKeyForArea = (area) => {
   return "CF_LINE";
 };
 
+const getCurrentTimeSlot = () => {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const nextHour = (currentHour + 1) % 24;
+  const formatStr = (h) => h.toString().padStart(2, '0') + ':00';
+  return `${formatStr(currentHour)} - ${formatStr(nextHour)}`;
+};
+
 // --- Components ---
 
 const Card = ({ children, className = "" }) => (
@@ -108,7 +116,7 @@ export default function App() {
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split('T')[0]);
   const [supervisorName, setSupervisorName] = useState('');
   
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState(getCurrentTimeSlot());
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedSubCategory, setSelectedSubCategory] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
@@ -133,9 +141,9 @@ export default function App() {
   // Report State
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportArea, setReportArea] = useState(AREAS[0]);
-  const [reportType, setReportType] = useState('production'); // Changed default to 'production'
+  const [reportType, setReportType] = useState('production');
   const [reportModel, setReportModel] = useState('');
-  const [productionTimeframe, setProductionTimeframe] = useState('hourly'); // Added hourly
+  const [productionTimeframe, setProductionTimeframe] = useState('hourly');
   
   // Plan Report State
   const [planReportMode, setPlanReportMode] = useState('monthly');
@@ -297,7 +305,6 @@ export default function App() {
     };
     setCurrentBatch([...(Array.isArray(currentBatch) ? currentBatch : []), newItem]);
     
-    // Reset specific fields, keep timeSlot active for multiple entries in same hour
     if(isCRF) { setSelectedSubCategory(''); setSelectedModel(''); } else { setSelectedModel(''); }
     setCurrentQty('');
   };
@@ -332,8 +339,6 @@ export default function App() {
             showNotification("Production Submitted!");
         }
         setCurrentBatch([]);
-        // Optional: clear timeslot after submission if you prefer a blank slate
-        // setSelectedTimeSlot(''); 
     } catch (e) {
         console.error(e);
         showNotification("Error Saving Data");
@@ -373,7 +378,6 @@ export default function App() {
     let totalUnits = 0;
     const agg = {};
     
-    // Aggregating by Model for the WhatsApp summary to keep it readable
     todaysEntries.forEach(entry => {
         (entry.items || []).forEach(item => {
             const key = activeTab === 'CRF' ? `${item.part} (${item.model})` : item.model;
@@ -476,7 +480,6 @@ export default function App() {
             const slot = item.timeSlot || 'Unspecified';
             if (!slots[slot]) slots[slot] = { items: [], total: 0 };
             
-            // Combine matching parts/models within the same hour
             let existing = slots[slot].items.find(i => i.model === item.model && i.part === item.part);
             if (existing) {
                 existing.qty += item.qty;
@@ -488,7 +491,6 @@ export default function App() {
         });
     });
     
-    // Sort slots based on the TIME_SLOTS array order
     const sortedSlots = Object.keys(slots).sort((a, b) => {
         let idxA = TIME_SLOTS.indexOf(a);
         let idxB = TIME_SLOTS.indexOf(b);
@@ -597,7 +599,7 @@ export default function App() {
     return (
       <div className="space-y-4 pb-28">
         <div className="bg-white shadow-sm sticky top-[72px] z-40 overflow-x-auto no-scrollbar border-b border-gray-100">
-          <div className="flex p-2 gap-2 min-w-max">{(AREAS || []).map(area => (<button key={area} onClick={() => { setActiveTab(area); setSelectedCategory(''); setSelectedSubCategory(''); setSelectedModel(''); setSelectedTimeSlot(''); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === area ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-50 text-gray-600'}`}>{area}</button>))}</div>
+          <div className="flex p-2 gap-2 min-w-max">{(AREAS || []).map(area => (<button key={area} onClick={() => { setActiveTab(area); setSelectedCategory(''); setSelectedSubCategory(''); setSelectedModel(''); setSelectedTimeSlot(getCurrentTimeSlot()); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === area ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-50 text-gray-600'}`}>{area}</button>))}</div>
         </div>
         <div className="px-4 space-y-4 max-w-md mx-auto mt-4">
           <Card className="p-4 border-l-4 border-l-blue-500">
@@ -632,7 +634,6 @@ export default function App() {
               {isCRF && (<div><label className="text-xs text-gray-500 font-semibold mb-1 block">Select Part</label><div className="relative"><select value={selectedSubCategory} onChange={(e) => setSelectedSubCategory(e.target.value)} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500 appearance-none"><option value="">Select Part...</option>{(filteredSecondary || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}</select><ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} /></div></div>)}
               {(selectedCategory || isWD || isCRF) && (<div className="animate-in fade-in slide-in-from-top-2 duration-300"><label className="text-xs text-gray-500 font-semibold mb-1 block">{isCRF ? 'For Model (Target)' : 'Model (Capacity)'}</label><div className="relative"><select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 outline-none focus:border-blue-500 appearance-none"><option value="">Select Model</option>{(filteredModels || []).map(model => <option key={model} value={model}>{model}</option>)}</select><ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} /></div></div>)}
               
-              {/* --- New Hourly Dropdown & Qty Row --- */}
               <div className="flex gap-3 items-end">
                   <div className="flex-[1.5]">
                       <label className="text-xs text-gray-500 font-semibold mb-1 block">Time Slot</label>
