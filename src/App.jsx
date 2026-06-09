@@ -168,11 +168,6 @@ export default function App() {
   const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
   const [tempPlanData, setTempPlanData] = useState({});
   
-// Use optional chaining and nullish coalescing to ensure it's always an array
-const filteredList = (Array.isArray(W) ? W : []).filter(item => {
-  // your filter logic
-});
-  
   // --- Firebase Effects ---
 
   useEffect(() => {
