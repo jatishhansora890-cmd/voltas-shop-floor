@@ -478,7 +478,7 @@ export default function App() {
     dayEntries.forEach(entry => {
         (entry.items || []).forEach(item => {
             const slot = item.timeSlot || 'Unspecified';
-            if (!slots[slot]) slots[slot] = { items: [], total: 0 };
+            if (!slots[slot]) slots[slot] = { items: [], total: 0, cumulative: 0 };
             
             let existing = slots[slot].items.find(i => i.model === item.model && i.part === item.part);
             if (existing) {
@@ -497,6 +497,13 @@ export default function App() {
         if (idxA === -1) idxA = 999;
         if (idxB === -1) idxB = 999;
         return idxA - idxB;
+    });
+
+    // Calculate running cumulative total dynamically
+    let runningTotal = 0;
+    sortedSlots.forEach(slot => {
+        runningTotal += slots[slot].total;
+        slots[slot].cumulative = runningTotal;
     });
 
     return { sortedSlots, slotsData: slots, totalForDay };
@@ -802,7 +809,17 @@ export default function App() {
                                <Card key={slot} className="overflow-hidden border-l-4 border-l-blue-500">
                                    <div className="bg-gray-50 p-2 border-b border-gray-100 flex justify-between items-center">
                                        <span className="font-bold text-gray-800 text-sm flex items-center gap-1"><Clock size={14} className="text-blue-500"/> {slot}</span>
-                                       <span className="text-xs font-bold text-gray-500">{hourlyReportData.slotsData[slot].total} Units</span>
+                                       <div className="flex gap-3 text-right">
+                                           <div>
+                                               <div className="text-[10px] text-gray-400 uppercase">Hourly</div>
+                                               <div className="text-sm font-bold text-gray-700">{hourlyReportData.slotsData[slot].total}</div>
+                                           </div>
+                                           <div className="w-px bg-gray-200"></div>
+                                           <div>
+                                               <div className="text-[10px] text-blue-400 uppercase">Total Till Time</div>
+                                               <div className="text-sm font-bold text-blue-700">{hourlyReportData.slotsData[slot].cumulative}</div>
+                                           </div>
+                                       </div>
                                    </div>
                                    <div className="divide-y divide-gray-50">
                                        {hourlyReportData.slotsData[slot].items.map((item, idx) => (
