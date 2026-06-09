@@ -3,7 +3,8 @@ import {
   PenTool, Plus, Trash2, Save, BarChart3, User, CheckCircle2,
   AlertCircle, ChevronDown, Settings, ToggleLeft, ToggleRight,
   Target, CalendarDays, GitMerge, ArrowDown, Lock, Unlock, Pencil,
-  Calendar, Download, FolderPlus, RefreshCw, Wifi, WifiOff, History
+  Calendar, Download, FolderPlus, RefreshCw, Wifi, WifiOff, History,
+  MessageCircle, Filter, X
 } from 'lucide-react';
 
 // --- Firebase Imports ---
@@ -40,8 +41,9 @@ const PROCESS_FLOW = {
   independent: ["CRF", "Door foaming", "WD final"]
 };
 
-// Default Initial Data
+// Default Initial Data (Includes pre-loaded Supervisor)
 const INITIAL_MASTER_DATA = {
+  SUPERVISORS: ["Jatish Hansora"],
   CRF_MACHINES: ["Komatsu Press", "Thermoforming", "Extrusion", "Paint Shop"],
   CRF_PARTS: ["Side Panel", "Back Panel", "Bottom Plate", "Inner Liner", "Door Liner", "Profile"],
   CF_LINE: {
@@ -107,6 +109,11 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [notification, setNotification] = useState(null);
 
+  // Shift Report Modal State
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [shiftManpower, setShiftManpower] = useState('');
+  const [shiftLoss, setShiftLoss] = useState('');
+
   // Settings State
   const [settingsGroup, setSettingsGroup] = useState('CF_LINE');
   const [newItemName, setNewItemName] = useState('');
@@ -125,6 +132,12 @@ export default function App() {
   const [reportMonth, setReportMonth] = useState(new Date().toISOString().slice(0, 7));
   const [rangeStart, setRangeStart] = useState(new Date().toISOString().split('T')[0]);
   const [rangeEnd, setRangeEnd] = useState(new Date().toISOString().split('T')[0]);
+
+  // Advanced Report State
+  const [advStart, setAdvStart] = useState(new Date().toISOString().split('T')[0]);
+  const [advEnd, setAdvEnd] = useState(new Date().toISOString().split('T')[0]);
+  const [advArea, setAdvArea] = useState('All');
+  const [advModel, setAdvModel] = useState('All');
 
   // Plan Edit Screen State
   const [planMode, setPlanMode] = useState('daily');
@@ -219,7 +232,9 @@ export default function App() {
     if (!newItemName) return;
     let newMasterData = { ...masterData };
     let newActiveModels = { ...activeModels, [newItemName]: true };
-    if (settingsGroup === 'CRF_MACHINES') newMasterData.CRF_MACHINES = [...(Array.isArray(newMasterData.CRF_MACHINES) ? newMasterData.CRF_MACHINES : []), newItemName];
+    
+    if (settingsGroup === 'SUPERVISORS') newMasterData.SUPERVISORS = [...(Array.isArray(newMasterData.SUPERVISORS) ? newMasterData.SUPERVISORS : []), newItemName];
+    else if (settingsGroup === 'CRF_MACHINES') newMasterData.CRF_MACHINES = [...(Array.isArray(newMasterData.CRF_MACHINES) ? newMasterData.CRF_MACHINES : []), newItemName];
     else if (settingsGroup === 'CRF_PARTS') newMasterData.CRF_PARTS = [...(Array.isArray(newMasterData.CRF_PARTS) ? newMasterData.CRF_PARTS : []), newItemName];
     else if (settingsGroup === 'CF_LINE') {
         if(!targetCategoryForModel) { showNotification("Select Category"); return; }
@@ -229,6 +244,7 @@ export default function App() {
         if (!newMasterData.WD_LINE) newMasterData.WD_LINE = { "Standard": [] };
         newMasterData.WD_LINE["Standard"] = [...(Array.isArray(newMasterData.WD_LINE["Standard"]) ? newMasterData.WD_LINE["Standard"] : []), newItemName];
     }
+    
     setMasterData(newMasterData); setActiveModels(newActiveModels); setNewItemName('');
     await updateSettingsDoc('masterData', newMasterData); await updateSettingsDoc('activeModels', newActiveModels); showNotification(`Item Added`);
   };
@@ -243,7 +259,8 @@ export default function App() {
   const handleSettingsDeleteItem = async (group, item, category = null) => {
     if (!confirm(`Delete ${item}?`)) return;
     let newMasterData = { ...masterData };
-    if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = Array.isArray(newMasterData.CRF_MACHINES) ? newMasterData.CRF_MACHINES.filter(i => i !== item) : [];
+    if (group === 'SUPERVISORS') newMasterData.SUPERVISORS = Array.isArray(newMasterData.SUPERVISORS) ? newMasterData.SUPERVISORS.filter(i => i !== item) : [];
+    else if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = Array.isArray(newMasterData.CRF_MACHINES) ? newMasterData.CRF_MACHINES.filter(i => i !== item) : [];
     else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = Array.isArray(newMasterData.CRF_PARTS) ? newMasterData.CRF_PARTS.filter(i => i !== item) : [];
     else if (group === 'CF_LINE' && category && newMasterData.CF_LINE) newMasterData.CF_LINE[category] = Array.isArray(newMasterData.CF_LINE[category]) ? newMasterData.CF_LINE[category].filter(i => i !== item) : [];
     else if (group === 'WD_LINE' && newMasterData.WD_LINE) newMasterData.WD_LINE["Standard"] = Array.isArray(newMasterData.WD_LINE["Standard"]) ? newMasterData.WD_LINE["Standard"].filter(i => i !== item) : [];
@@ -273,8 +290,13 @@ export default function App() {
 
   const removeBatchItem = (id) => setCurrentBatch(Array.isArray(currentBatch) ? currentBatch.filter(item => item.id !== id) : []);
 
+  const handleAttemptSubmit = () => {
+    if (!supervisorName) return showNotification("⚠️ Please select a Supervisor first");
+    if (!Array.isArray(currentBatch) || currentBatch.length === 0) return showNotification("⚠️ Please Add at least one production item");
+    handleSubmitProduction();
+  };
+
   const handleSubmitProduction = async () => {
-    if (!supervisorName || !Array.isArray(currentBatch) || currentBatch.length === 0) return;
     if (!user) { showNotification("Offline"); return; }
 
     const payload = {
@@ -327,6 +349,35 @@ export default function App() {
       }
   };
 
+  // --- WhatsApp End Shift Logic ---
+  const generateWhatsAppReport = () => {
+    const todaysEntries = Array.isArray(entries) ? entries.filter(e => e.date === entryDate && e.area === activeTab) : [];
+    
+    let productionText = '';
+    let totalUnits = 0;
+    const agg = {};
+    
+    todaysEntries.forEach(entry => {
+        (entry.items || []).forEach(item => {
+            const key = activeTab === 'CRF' ? `${item.part} (${item.model})` : item.model;
+            agg[key] = (agg[key] || 0) + item.qty;
+            totalUnits += item.qty;
+        });
+    });
+
+    Object.entries(agg).forEach(([mod, qty]) => {
+        productionText += `- ${mod}: *${qty}*\n`;
+    });
+
+    const msg = `*End Shift Report - Voltas CR Waghodia*\nDate: ${entryDate}\nArea: ${activeTab}\nSupervisor: ${supervisorName || 'Not Specified'}\n\n*Production Data (Total: ${totalUnits}):*\n${productionText || 'No production logged'}\n*Manpower Count:* ${shiftManpower || 0}\n*Loss Details:* ${shiftLoss || 'None'}`;
+
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    setShowShiftModal(false);
+    setShiftManpower('');
+    setShiftLoss('');
+  };
+
+  // --- Report Processing ---
   const handleSavePlan = async () => {
     if (!user) return;
     if (planMode === 'monthly') {
@@ -348,7 +399,6 @@ export default function App() {
     const link = document.createElement('a'); const url = URL.createObjectURL(blob); link.setAttribute('href', url); link.setAttribute('download', `${filename}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // --- Reports Data ---
   const productionReportData = useMemo(() => {
     const isMonthly = productionTimeframe === 'monthly';
     const filterFn = (entry) => entry.area === reportArea && (isMonthly ? entry.date.startsWith(reportMonth) : entry.date === reportDate);
@@ -397,6 +447,29 @@ export default function App() {
         return { rows: comparison.sort((a, b) => b.actual - a.actual), totalActual };
     }
   }, [entries, dailyPlans, monthlyPlans, reportDate, reportMonth, reportArea, productionTimeframe, activeModels, masterData]);
+
+  // Advanced Excel Report Filter Logic
+  const advancedReportData = useMemo(() => {
+    let filtered = Array.isArray(entries) ? entries.filter(e => e.date >= advStart && e.date <= advEnd) : [];
+    if (advArea !== 'All') filtered = filtered.filter(e => e.area === advArea);
+
+    let flatRows = [];
+    filtered.forEach(entry => {
+        (entry.items || []).forEach(item => {
+            if (advModel !== 'All' && item.model !== advModel) return;
+            flatRows.push({
+                Date: entry.date,
+                Area: entry.area,
+                Supervisor: entry.supervisor || '-',
+                Machine_Category: item.category || item.machine || '-',
+                Part: item.part || '-',
+                Model: item.model,
+                Qty: item.qty
+            });
+        });
+    });
+    return flatRows.sort((a, b) => new Date(b.Date) - new Date(a.Date));
+  }, [entries, advStart, advEnd, advArea, advModel]);
 
   const handleEditPlanFromReport = (mode, dateKey) => {
     if (mode === 'monthly') { setPlanMode('monthly'); setPlanMonth(dateKey); }
@@ -460,7 +533,6 @@ export default function App() {
     else if (isWD) modelOptions = masterData.WD_LINE?.["Standard"] || [];
     else if (selectedCategory) modelOptions = masterData.CF_LINE?.[selectedCategory] || [];
     
-    // Completely crash-proof filter function
     const filterActive = (list) => Array.isArray(list) ? list.filter(item => activeModels[item] !== false) : [];
     
     const filteredPrimary = isCRF ? filterActive(primaryOptions) : (Array.isArray(primaryOptions) ? primaryOptions : []);
@@ -470,7 +542,7 @@ export default function App() {
     const recentEntries = Array.isArray(entries) ? entries.filter(e => e.date === entryDate && e.area === activeTab) : [];
 
     return (
-      <div className="space-y-4 pb-24">
+      <div className="space-y-4 pb-28">
         <div className="bg-white shadow-sm sticky top-[72px] z-40 overflow-x-auto no-scrollbar border-b border-gray-100">
           <div className="flex p-2 gap-2 min-w-max">{(AREAS || []).map(area => (<button key={area} onClick={() => { setActiveTab(area); setSelectedCategory(''); setSelectedSubCategory(''); setSelectedModel(''); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === area ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-50 text-gray-600'}`}>{area}</button>))}</div>
         </div>
@@ -479,9 +551,16 @@ export default function App() {
               <div className="flex justify-between items-start">
                   <div className="flex-1">
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Entry Date</label>
-                      <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className="w-full p-2 border rounded text-sm mb-2" />
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Supervisor Name</label>
-                      <div className="flex items-center gap-2"><User size={18} className="text-gray-400" /><input type="text" value={supervisorName} onChange={(e) => setSupervisorName(e.target.value)} placeholder="Enter your name" className="w-full outline-none text-gray-800 font-medium placeholder-gray-300" /></div>
+                      <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className="w-full p-2 border rounded text-sm mb-3" />
+                      
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Supervisor</label>
+                      <div className="relative">
+                          <select value={supervisorName} onChange={(e) => setSupervisorName(e.target.value)} className="w-full p-2 border rounded text-sm bg-gray-50 outline-none focus:border-blue-500 appearance-none font-medium text-gray-800">
+                              <option value="">Select Supervisor...</option>
+                              {(masterData.SUPERVISORS || []).map(sup => <option key={sup} value={sup}>{sup}</option>)}
+                          </select>
+                          <ChevronDown className="absolute right-3 top-2.5 text-gray-400 pointer-events-none" size={16} />
+                      </div>
                   </div>
               </div>
           </Card>
@@ -504,7 +583,18 @@ export default function App() {
           </Card>
 
           {Array.isArray(currentBatch) && currentBatch.length > 0 && (<div className="space-y-2 animate-in fade-in slide-in-from-bottom-4"><h3 className="text-sm font-semibold text-gray-500 ml-1">Entries to {editingId ? 'Update' : 'Submit'}</h3>{currentBatch.map((item) => (<div key={item.id} className="bg-white p-3 rounded-lg border border-gray-200 flex justify-between items-center shadow-sm"><div>{isCRF ? (<><div className="font-bold text-gray-800">{item.part}</div><div className="text-xs text-gray-500">{item.machine} | For: {item.model}</div></>) : (<><div className="font-bold text-gray-800">{item.model}</div>{!isWD && <div className="text-xs text-gray-500">{item.category}</div>}</>)}</div><div className="flex items-center gap-4"><span className="text-lg font-bold text-blue-600">{item.qty}</span><button onClick={() => removeBatchItem(item.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={18} /></button></div></div>))}</div>)}
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 shadow-lg z-50"><div className="max-w-md mx-auto"><button onClick={handleSubmitProduction} disabled={!supervisorName || !Array.isArray(currentBatch) || currentBatch.length === 0} className={`w-full py-3.5 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-lg text-white disabled:bg-gray-200 disabled:text-gray-400 ${editingId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{(!supervisorName || !Array.isArray(currentBatch) || currentBatch.length === 0) ? <><AlertCircle size={20} /> Complete Details</> : (editingId ? <><RefreshCw size={20} /> Update Entry</> : <><Save size={20} /> Submit Production</>)}</button></div></div>
+          
+          <div className="fixed bottom-0 left-0 right-0 p-3 bg-white border-t border-gray-100 shadow-lg z-40">
+            <div className="max-w-md mx-auto flex gap-2">
+              <button onClick={handleAttemptSubmit} className={`flex-1 py-3 rounded-xl font-bold text-lg flex items-center justify-center gap-2 shadow-sm text-white transition-all ${editingId ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                {editingId ? <><RefreshCw size={20} /> Update</> : <><Save size={20} /> Submit Data</>}
+              </button>
+              <button onClick={() => setShowShiftModal(true)} className="bg-green-500 hover:bg-green-600 text-white px-4 rounded-xl flex items-center justify-center shadow-sm transition-all text-sm font-bold flex-col">
+                <MessageCircle size={20} />
+                <span>Shift End</span>
+              </button>
+            </div>
+          </div>
           
           {recentEntries.length > 0 && (
               <div className="mt-8 pt-4 border-t border-gray-200">
@@ -525,6 +615,33 @@ export default function App() {
               </div>
           )}
         </div>
+
+        {/* --- End Shift Modal --- */}
+        {showShiftModal && (
+            <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 animate-in fade-in">
+                <div className="bg-white rounded-2xl shadow-2xl p-5 w-full max-w-sm">
+                    <div className="flex justify-between items-center mb-4 border-b pb-2">
+                        <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2"><MessageCircle className="text-green-500"/> Shift Report</h3>
+                        <button onClick={() => setShowShiftModal(false)} className="text-gray-400 hover:text-gray-700"><X size={20}/></button>
+                    </div>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Total Manpower Count</label>
+                            <input type="number" value={shiftManpower} onChange={(e) => setShiftManpower(e.target.value)} placeholder="e.g. 15" className="w-full p-3 bg-gray-50 rounded-lg border outline-none focus:border-green-500" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Loss Details / Remarks</label>
+                            <textarea value={shiftLoss} onChange={(e) => setShiftLoss(e.target.value)} placeholder="Describe any machine breakdown or material shortage..." rows="3" className="w-full p-3 bg-gray-50 rounded-lg border outline-none focus:border-green-500"></textarea>
+                        </div>
+                        <div className="pt-3 flex gap-2">
+                            <button onClick={() => setShowShiftModal(false)} className="flex-1 py-3 text-gray-600 font-bold bg-gray-100 rounded-xl hover:bg-gray-200">Cancel</button>
+                            <button onClick={generateWhatsAppReport} className="flex-1 py-3 bg-green-500 text-white font-bold rounded-xl shadow-lg hover:bg-green-600">Share WhatsApp</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
       </div>
     );
   };
@@ -533,7 +650,12 @@ export default function App() {
     const isCRF = reportArea === 'CRF';
     return (
     <div className="p-4 max-w-md mx-auto space-y-6 pb-20">
-      <div className="flex bg-gray-200 p-1 rounded-lg"><button onClick={() => setReportType('flow')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'flow' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Process Flow</button><button onClick={() => setReportType('daily')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'daily' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Production</button><button onClick={() => setReportType('plan')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'plan' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Plan Status</button></div>
+      <div className="flex bg-gray-200 p-1 rounded-lg">
+          <button onClick={() => setReportType('flow')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'flow' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Process Flow</button>
+          <button onClick={() => setReportType('daily')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'daily' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Production</button>
+          <button onClick={() => setReportType('plan')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'plan' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Plan Status</button>
+          <button onClick={() => setReportType('advanced')} className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'advanced' ? 'bg-white shadow text-blue-800' : 'text-gray-600'}`}>Advanced</button>
+      </div>
       
       {reportType === 'flow' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
@@ -550,7 +672,7 @@ export default function App() {
       )}
 
       {reportType === 'daily' && (
-        <div className="space-y-4">
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
            <div className="flex gap-2 mb-2"><button onClick={() => setProductionTimeframe('daily')} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'daily' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><CalendarDays size={14}/> Daily Report</button><button onClick={() => setProductionTimeframe('monthly')} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1 ${productionTimeframe === 'monthly' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}><Calendar size={14}/> Monthly Report</button></div>
           <Card className="p-4 space-y-4 bg-white border border-gray-200">
              <div className="flex justify-between items-center border-b border-gray-100 pb-2"><span className="text-xs font-bold text-gray-400 uppercase">Filter & Export</span><button onClick={() => { const data = productionReportData.rows || []; const filename = `${productionTimeframe}_Production_${productionTimeframe === 'daily' ? reportDate : reportMonth}`; let cleanData; if (isCRF) { cleanData = data.map(r => ({ Machine: r.machine, Part: r.part, Model: r.model, Qty: r.actual })); } else { cleanData = data.map(r => ({ Model: r.model, Plan: r.plan, Actual: r.actual, Achievement_Percent: r.percent + '%' })); } exportToCSV(cleanData, filename); }} className="text-blue-600 bg-blue-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export Excel</button></div>
@@ -562,6 +684,57 @@ export default function App() {
              <div className="bg-blue-50 p-3 flex justify-between items-center border-t border-blue-100"><span className="text-blue-800 font-bold text-sm">Total {isCRF ? 'Parts' : 'Units'}</span><span className="text-blue-800 font-bold text-lg">{productionReportData.totalActual}</span></div>
           </div>
         </div>
+      )}
+
+      {/* --- Advanced Report Tab --- */}
+      {reportType === 'advanced' && (
+         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+           <Card className="p-4 bg-white border border-gray-200">
+             <div className="flex justify-between items-center mb-3 border-b border-gray-100 pb-2">
+                 <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={14}/> Advanced Filters</span>
+                 <button onClick={() => exportToCSV(advancedReportData, `AdvancedReport_${advStart}_to_${advEnd}`)} className="text-green-600 bg-green-50 p-1.5 rounded-lg flex items-center gap-1 text-xs font-bold"><Download size={14}/> Export All Data</button>
+             </div>
+             <div className="grid grid-cols-2 gap-3 mb-3">
+                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">From Date</label><input type="date" value={advStart} onChange={(e) => setAdvStart(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>
+                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">To Date</label><input type="date" value={advEnd} onChange={(e) => setAdvEnd(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm" /></div>
+                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">Filter Area</label><select value={advArea} onChange={(e) => setAdvArea(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm bg-white"><option value="All">All Areas</option>{AREAS.map(area => <option key={area} value={area}>{area}</option>)}</select></div>
+                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">Filter Model</label><select value={advModel} onChange={(e) => setAdvModel(e.target.value)} className="w-full p-2 rounded border border-gray-200 text-sm bg-white"><option value="All">All Models</option>{(masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat().sort() : []).map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+             </div>
+           </Card>
+
+           <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+               <div className="bg-gray-50 p-3 border-b border-gray-200 flex justify-between items-center text-sm font-bold text-gray-700">
+                   <span>Matching Records ({advancedReportData.length})</span>
+                   <span className="text-blue-600">Total Qty: {advancedReportData.reduce((sum, row) => sum + row.Qty, 0)}</span>
+               </div>
+               <div className="max-h-[400px] overflow-y-auto">
+                   {advancedReportData.length > 0 ? (
+                       <table className="w-full text-left text-sm whitespace-nowrap">
+                           <thead className="bg-white sticky top-0 border-b border-gray-200">
+                               <tr>
+                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Date</th>
+                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Area / Machine</th>
+                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase">Model / Part</th>
+                                   <th className="p-3 text-xs font-bold text-gray-500 uppercase text-right">Qty</th>
+                               </tr>
+                           </thead>
+                           <tbody className="divide-y divide-gray-100">
+                               {advancedReportData.map((row, idx) => (
+                                   <tr key={idx} className="hover:bg-gray-50">
+                                       <td className="p-3 text-gray-700">{row.Date}</td>
+                                       <td className="p-3"><div className="font-medium text-gray-800">{row.Area}</div><div className="text-[10px] text-gray-400">{row.Machine_Category}</div></td>
+                                       <td className="p-3"><div className="font-medium text-gray-800">{row.Model}</div><div className="text-[10px] text-gray-400">{row.Part !== '-' ? row.Part : ''}</div></td>
+                                       <td className="p-3 text-right font-bold text-blue-600">{row.Qty}</td>
+                                   </tr>
+                               ))}
+                           </tbody>
+                       </table>
+                   ) : (
+                       <div className="p-8 text-center text-gray-400 text-sm">No records match these advanced filters.</div>
+                   )}
+               </div>
+           </div>
+         </div>
       )}
       
       {reportType === 'plan' && (
@@ -621,9 +794,10 @@ export default function App() {
      <div className="p-4 max-w-md mx-auto space-y-6 pb-20">
       <div className="bg-white p-4 rounded-xl border-l-4 border-blue-600 shadow-sm"><h2 className="font-bold text-gray-800 flex items-center gap-2"><Settings size={20} className="text-blue-600" /> Plant Configuration</h2></div>
       
-      <div className="grid grid-cols-2 gap-2 mb-2">
+      <div className="grid grid-cols-3 gap-2 mb-2">
          <button onClick={() => { setSettingsGroup('CF_LINE'); setTargetCategoryForModel(''); }} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'CF_LINE' ? 'bg-blue-600 text-white' : 'bg-white'}`}>Assembly Models</button>
          <button onClick={() => { setSettingsGroup('WD_LINE'); setTargetCategoryForModel(''); }} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'WD_LINE' ? 'bg-blue-600 text-white' : 'bg-white'}`}>Water Dispenser</button>
+         <button onClick={() => setSettingsGroup('SUPERVISORS')} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'SUPERVISORS' ? 'bg-blue-600 text-white' : 'bg-white'}`}>Supervisors</button>
       </div>
       <div className="grid grid-cols-2 gap-2">
          <button onClick={() => setSettingsGroup('CRF_MACHINES')} className={`p-2 rounded-lg text-xs font-bold border ${settingsGroup === 'CRF_MACHINES' ? 'bg-blue-600 text-white' : 'bg-white'}`}>CRF Machines</button>
@@ -642,7 +816,7 @@ export default function App() {
 
       <Card className="p-4">
           <label className="text-xs font-bold text-gray-500 mb-2 block uppercase">
-              {settingsGroup === 'CRF_MACHINES' ? 'Add Machine' : settingsGroup === 'CRF_PARTS' ? 'Add Part' : 'Add Model'}
+              {settingsGroup === 'CRF_MACHINES' ? 'Add Machine' : settingsGroup === 'CRF_PARTS' ? 'Add Part' : settingsGroup === 'SUPERVISORS' ? 'Add Supervisor' : 'Add Model'}
           </label>
           <div className="space-y-2">
              {settingsGroup === 'CF_LINE' && (
@@ -662,6 +836,14 @@ export default function App() {
           <h3 className="text-xs font-bold text-gray-400 uppercase mb-3">Existing Items</h3>
           <div className="divide-y divide-gray-100">
              
+             {/* SUPERVISORS */}
+             {settingsGroup === 'SUPERVISORS' && (Array.isArray(masterData.SUPERVISORS) ? masterData.SUPERVISORS : []).map(m => (
+                 <div key={m} className="flex justify-between py-2 text-sm items-center">
+                     <span className="font-bold text-gray-700">{m}</span>
+                     <button onClick={() => handleSettingsDeleteItem('SUPERVISORS', m)} className="text-red-400 p-2"><Trash2 size={16}/></button>
+                 </div>
+             ))}
+
              {/* CRF MACHINES */}
              {settingsGroup === 'CRF_MACHINES' && (Array.isArray(masterData.CRF_MACHINES) ? masterData.CRF_MACHINES : []).map(m => (
                  <div key={m} className="flex justify-between py-2 text-sm items-center">
