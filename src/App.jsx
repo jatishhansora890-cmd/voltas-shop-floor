@@ -46,12 +46,12 @@ import {
 // --- Firebase Config & Init ---
 // !!! REPLACE THESE VALUES WITH YOUR REAL KEYS FROM FIREBASE CONSOLE !!!
 const firebaseConfig = {
-  apiKey: "AIzaSyCAoiDnT3sSeGdKpt-jKBEoQmhLt4JKizg",
-  authDomain: "voltas-vadodara.firebaseapp.com",
-  projectId: "voltas-vadodara",
-  storageBucket: "voltas-vadodara.firebasestorage.app",
-  messagingSenderId: "891841914552",
-  appId: "1:891841914552:web:31a4c6e0c49ac6fddff64d"
+  apiKey: "AIzaSy...",
+  authDomain: "your-project.firebaseapp.com",
+  projectId: "your-project-id",
+  storageBucket: "your-project.appspot.com",
+  messagingSenderId: "123...",
+  appId: "1:123..."
 };
 
 // Initialize Firebase
@@ -167,7 +167,7 @@ export default function App() {
   const [planMonth, setPlanMonth] = useState(new Date().toISOString().slice(0, 7));
   const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
   const [tempPlanData, setTempPlanData] = useState({});
-  
+
   // --- Firebase Effects ---
 
   useEffect(() => {
@@ -275,10 +275,10 @@ export default function App() {
   const handleSettingsDeleteItem = async (group, item, category = null) => {
     if (!confirm(`Delete ${item}?`)) return;
     let newMasterData = { ...masterData };
-    if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = newMasterData.CRF_MACHINES?.filter(i => i !== item)|| [];
-    else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = newMasterData.CRF_PARTS?.filter(i => i !== item)|| [];
-    else if (group === 'CF_LINE' && category) newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category]?.filter(i => i !== item)|| [];
-    else if (group === 'WD_LINE') newMasterData.WD_LINE["Standard"] = (newMasterData.WD_LINE["Standard"] || [])?.filter(i => i !== item)|| [];
+    if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = newMasterData.CRF_MACHINES.filter(i => i !== item);
+    else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = newMasterData.CRF_PARTS.filter(i => i !== item);
+    else if (group === 'CF_LINE' && category) newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category].filter(i => i !== item);
+    else if (group === 'WD_LINE') newMasterData.WD_LINE["Standard"] = (newMasterData.WD_LINE["Standard"] || []).filter(i => i !== item);
     setMasterData(newMasterData); await updateSettingsDoc('masterData', newMasterData); showNotification("Deleted");
   };
 
@@ -303,7 +303,7 @@ export default function App() {
     setCurrentQty('');
   };
 
-  const removeBatchItem = (id) => setCurrentBatch(currentBatch?.filter(item => item.id !== id));
+  const removeBatchItem = (id) => setCurrentBatch(currentBatch.filter(item => item.id !== id));
 
   const handleSubmitProduction = async () => {
     if (!supervisorName || currentBatch.length === 0) return;
@@ -384,7 +384,7 @@ export default function App() {
   const productionReportData = useMemo(() => {
     const isMonthly = productionTimeframe === 'monthly';
     const filterFn = (entry) => entry.area === reportArea && (isMonthly ? entry.date.startsWith(reportMonth) : entry.date === reportDate);
-    const filtered = entries?.filter(filterFn);
+    const filtered = entries.filter(filterFn);
     const isCRF = reportArea === 'CRF';
     const isDoorFoaming = reportArea === 'Door foaming';
     const plan = isMonthly ? (monthlyPlans[reportMonth] || {}) : (dailyPlans[reportDate] || {});
@@ -438,7 +438,7 @@ export default function App() {
   };
 
   const processFlowData = useMemo(() => {
-    const planData = dailyPlans[reportDate] || {}; const dayEntries = entries?.filter(e => e.date === reportDate); const cfModels = masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat() : []; const targetModels = reportModel ? [reportModel] : cfModels;
+    const planData = dailyPlans[reportDate] || {}; const dayEntries = entries.filter(e => e.date === reportDate); const cfModels = masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat() : []; const targetModels = reportModel ? [reportModel] : cfModels;
     let totalPlan = 0; targetModels.forEach(m => { if (planData[m]) totalPlan += planData[m]; });
     const areaActuals = {}; AREAS.forEach(area => areaActuals[area] = 0);
     dayEntries.forEach(entry => { if (entry.area === 'CRF') return; entry.items.forEach(item => { if (!reportModel || item.model === reportModel) areaActuals[entry.area] += item.qty; }); });
@@ -488,14 +488,12 @@ export default function App() {
     if (isCRF) modelOptions = Object.values(masterData.CF_LINE).flat();
     else if (isWD) modelOptions = masterData.WD_LINE["Standard"];
     else if (selectedCategory) modelOptions = masterData.CF_LINE[selectedCategory] || [];
-    const filterActive = (list) => list?
-      
-        .filter(item => activeModels[item] !== false);
+    const filterActive = (list) => list.filter(item => activeModels[item] !== false);
     const filteredPrimary = isCRF ? filterActive(primaryOptions) : primaryOptions;
     const filteredSecondary = filterActive(secondaryOptions);
     const filteredModels = filterActive(modelOptions);
 
-    const recentEntries = entries?.filter(e => e.date === entryDate && e.area === activeTab);
+    const recentEntries = entries.filter(e => e.date === entryDate && e.area === activeTab);
 
     return (
       <div className="space-y-4 pb-24">
