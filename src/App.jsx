@@ -276,9 +276,9 @@ export default function App() {
     if (!confirm(`Delete ${item}?`)) return;
     let newMasterData = { ...masterData };
     if (group === 'CRF_MACHINES') newMasterData.CRF_MACHINES = newMasterData?.CRF_MACHINES.filter(i => i !== item)|| [];
-    else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = newMasterData.CRF_PARTS.filter(i => i !== item);
-    else if (group === 'CF_LINE' && category) newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category].filter(i => i !== item);
-    else if (group === 'WD_LINE') newMasterData.WD_LINE["Standard"] = (newMasterData.WD_LINE["Standard"] || []).filter(i => i !== item);
+    else if (group === 'CRF_PARTS') newMasterData.CRF_PARTS = newMasterData?.CRF_PARTS.filter(i => i !== item)|| [];
+    else if (group === 'CF_LINE' && category) newMasterData.CF_LINE[category] = newMasterData.CF_LINE[category]?.filter(i => i !== item)|| [];
+    else if (group === 'WD_LINE') newMasterData.WD_LINE["Standard"] = (newMasterData.WD_LINE["Standard"] || [])?.filter(i => i !== item)|| [];
     setMasterData(newMasterData); await updateSettingsDoc('masterData', newMasterData); showNotification("Deleted");
   };
 
