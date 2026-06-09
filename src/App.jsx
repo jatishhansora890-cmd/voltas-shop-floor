@@ -303,7 +303,7 @@ export default function App() {
     setCurrentQty('');
   };
 
-  const removeBatchItem = (id) => setCurrentBatch(currentBatch.filter(item => item.id !== id));
+  const removeBatchItem = (id) => setCurrentBatch(currentBatch?.filter(item => item.id !== id));
 
   const handleSubmitProduction = async () => {
     if (!supervisorName || currentBatch.length === 0) return;
@@ -384,7 +384,7 @@ export default function App() {
   const productionReportData = useMemo(() => {
     const isMonthly = productionTimeframe === 'monthly';
     const filterFn = (entry) => entry.area === reportArea && (isMonthly ? entry.date.startsWith(reportMonth) : entry.date === reportDate);
-    const filtered = entries.filter(filterFn);
+    const filtered = entries?.filter(filterFn);
     const isCRF = reportArea === 'CRF';
     const isDoorFoaming = reportArea === 'Door foaming';
     const plan = isMonthly ? (monthlyPlans[reportMonth] || {}) : (dailyPlans[reportDate] || {});
@@ -438,7 +438,7 @@ export default function App() {
   };
 
   const processFlowData = useMemo(() => {
-    const planData = dailyPlans[reportDate] || {}; const dayEntries = entries.filter(e => e.date === reportDate); const cfModels = masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat() : []; const targetModels = reportModel ? [reportModel] : cfModels;
+    const planData = dailyPlans[reportDate] || {}; const dayEntries = entries?.filter(e => e.date === reportDate); const cfModels = masterData.CF_LINE ? Object.values(masterData.CF_LINE).flat() : []; const targetModels = reportModel ? [reportModel] : cfModels;
     let totalPlan = 0; targetModels.forEach(m => { if (planData[m]) totalPlan += planData[m]; });
     const areaActuals = {}; AREAS.forEach(area => areaActuals[area] = 0);
     dayEntries.forEach(entry => { if (entry.area === 'CRF') return; entry.items.forEach(item => { if (!reportModel || item.model === reportModel) areaActuals[entry.area] += item.qty; }); });
@@ -488,12 +488,13 @@ export default function App() {
     if (isCRF) modelOptions = Object.values(masterData.CF_LINE).flat();
     else if (isWD) modelOptions = masterData.WD_LINE["Standard"];
     else if (selectedCategory) modelOptions = masterData.CF_LINE[selectedCategory] || [];
-    const filterActive = (list) => list.filter(item => activeModels[item] !== false);
+    const filterActive = (list) => list?
+      ?.filter(item => activeModels[item] !== false);
     const filteredPrimary = isCRF ? filterActive(primaryOptions) : primaryOptions;
     const filteredSecondary = filterActive(secondaryOptions);
     const filteredModels = filterActive(modelOptions);
 
-    const recentEntries = entries.filter(e => e.date === entryDate && e.area === activeTab);
+    const recentEntries = entries?.filter(e => e.date === entryDate && e.area === activeTab);
 
     return (
       <div className="space-y-4 pb-24">
